@@ -1,20 +1,21 @@
-import type { MidiMarker, MidiNote, MidiPlacement } from '../lib/midi'
+import { useEffect, useRef } from 'react'
+import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
 import { noteName } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import { fretboardPoint } from '../lib/fretboardLayout'
 
 type FlowViewProps = {
+  midi: ParsedMidi
   notes: MidiNote[]
   markers: MidiMarker[]
   placements: Map<string, MidiPlacement>
   currentTime: number
-  duration: number
+  isPlaying: boolean
+  onScrub: (time: number) => void
   trackColors?: Record<number, string>
 }
 
-const LEAD_SECONDS = 6
-const TOP_Y = 7
-const TARGET_Y = 73
+const PIXELS_PER_SECOND = 168
 
 function currentMarker(markers: MidiMarker[], currentTime: number) {
   let active: MidiMarker | null = null
@@ -26,88 +27,98 @@ function currentMarker(markers: MidiMarker[], currentTime: number) {
   return active
 }
 
-function yForTime(time: number, currentTime: number) {
-  const until = time - currentTime
-  return TARGET_Y - (until / LEAD_SECONDS) * (TARGET_Y - TOP_Y)
-}
-
 export function FlowView({
+  midi,
   notes,
   markers,
   placements,
   currentTime,
-  duration,
+  isPlaying,
+  onScrub,
   trackColors = {},
 }: FlowViewProps) {
-  const visibleNotes = notes.filter((note) => {
-    const y = yForTime(note.time, currentTime)
-    return y > -8 && y < 92 && note.time + note.duration > currentTime - 0.5
-  })
-  const visibleMarkers = markers.filter((marker) => {
-    const y = yForTime(marker.time, currentTime)
-    return marker.type === 'marker' && y > -2 && y < TARGET_Y + 6
-  })
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const programmaticScrollRef = useRef(false)
   const marker = currentMarker(markers, currentTime)
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0
+  const contentHeight = Math.max(520, midi.duration * PIXELS_PER_SECOND)
+
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+    const targetTop = currentTime * PIXELS_PER_SECOND
+    programmaticScrollRef.current = true
+    container.scrollTop = Math.max(0, targetTop)
+    window.setTimeout(() => {
+      programmaticScrollRef.current = false
+    }, 80)
+  }, [currentTime])
+
+  function handleScroll() {
+    const container = scrollRef.current
+    if (!container || programmaticScrollRef.current) return
+    onScrub(Math.min(midi.duration, Math.max(0, container.scrollTop / PIXELS_PER_SECOND)))
+  }
 
   return (
-    <section className="flow-panel" aria-label="Falling fretboard notes">
-      <div className="flow-toolbar">
-        <div className="current-chord">
-          <span>Chord</span>
-          <strong>{marker?.text || '-'}</strong>
-        </div>
-        <div className="timeline" aria-label="Song progress">
-          <div style={{ width: `${progress}%` }} />
-        </div>
-        <div className="time-readout">
-          {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, '0')}
-        </div>
+    <section className="flow-panel" aria-label="Scrollable falling MIDI notes" data-playing={isPlaying}>
+      <div className="panel-mini-header">
+        <span>MIDI</span>
+        <strong>{marker?.text || '-'}</strong>
       </div>
-      <div className="flow-stage">
-        <div className="string-guides" aria-hidden="true">
-          {GUITAR_STRINGS.map((string) => (
-            <div key={string.name} style={{ left: `${6 + string.index * 17.6}%` }}>
-              {string.name}
+      <div className="flow-frame">
+        <div className="flow-scroll" ref={scrollRef} onScroll={handleScroll}>
+          <div className="flow-spacer" />
+          <div className="flow-content" style={{ height: contentHeight }}>
+            <div className="string-guides" aria-hidden="true">
+              {GUITAR_STRINGS.map((string) => (
+                <div key={string.name} style={{ left: `${6 + string.index * 17.6}%` }}>
+                  {string.name}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        {visibleMarkers.map((event) => {
-          const y = yForTime(event.time, currentTime)
-          return (
-            <div key={`${event.tick}-${event.text}`} className="falling-chord" style={{ top: `${y}%` }}>
-              {event.text}
-            </div>
-          )
-        })}
-        {visibleNotes.map((note) => {
-          const placement = placements.get(note.id)
-          if (!placement) return null
-          const point = fretboardPoint(placement)
-          const string = GUITAR_STRINGS[placement.stringIndex]
-          const x = (point.x / 1080) * 100
-          const y = yForTime(note.time, currentTime)
-          const height = Math.max(18, (note.duration / LEAD_SECONDS) * 280)
-          const active = note.time <= currentTime && note.time + note.duration >= currentTime
-          const trackColor = trackColors[note.trackIndex] ?? string.color
+            {markers
+              .filter((event) => event.type === 'marker')
+              .map((event) => (
+                <div
+                  key={`${event.tick}-${event.text}`}
+                  className="falling-chord"
+                  style={{ top: event.time * PIXELS_PER_SECOND }}
+                >
+                  {event.text}
+                </div>
+              ))}
+            {notes.map((note) => {
+              const placement = placements.get(note.id)
+              if (!placement) return null
+              const point = fretboardPoint(placement)
+              const string = GUITAR_STRINGS[placement.stringIndex]
+              const x = (point.x / 1080) * 100
+              const y = note.time * PIXELS_PER_SECOND
+              const height = Math.max(22, note.duration * PIXELS_PER_SECOND)
+              const active = note.time <= currentTime && note.time + note.duration >= currentTime
+              const trackColor = trackColors[note.trackIndex] ?? string.color
 
-          return (
-            <div
-              key={note.id}
-              className={`falling-note ${active ? 'is-active' : ''}`}
-              style={{
-                left: `${x}%`,
-                top: `${y}%`,
-                height,
-                borderColor: string.color,
-                background: `linear-gradient(180deg, ${trackColor}, rgba(255,255,255,.12))`,
-              }}
-              title={`${note.trackName}: ${noteName(note.midi)} on ${string.name} fret ${placement.fret}`}
-            >
-              <span>{placement.fret}</span>
-            </div>
-          )
-        })}
+              return (
+                <div
+                  key={note.id}
+                  className={`falling-note ${active ? 'is-active' : ''}`}
+                  style={{
+                    left: `${x}%`,
+                    top: y,
+                    height,
+                    borderColor: string.color,
+                    background: `linear-gradient(180deg, ${trackColor}, rgba(255,255,255,.12))`,
+                  }}
+                  title={`${note.trackName}: ${noteName(note.midi)} on ${string.name} fret ${placement.fret}`}
+                >
+                  <span>{placement.fret}</span>
+                </div>
+              )
+            })}
+          </div>
+          <div className="flow-spacer" />
+        </div>
+        <div className="flow-center-playhead" aria-hidden="true" />
       </div>
     </section>
   )

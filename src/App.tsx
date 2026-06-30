@@ -1,23 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import {
-  Download,
-  FileMusic,
-  FolderOpen,
-  Gauge,
-  Guitar,
-  ListMusic,
-  Pause,
-  Play,
-  SkipBack,
-  Square,
-  Upload,
-} from 'lucide-react'
+import { Download, FileMusic, FolderOpen, Guitar, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
 import { SheetView } from './components/SheetView'
-import { GUITAR_STRINGS, mapNotesToFretboard } from './lib/fretboard'
+import { mapNotesToFretboard } from './lib/fretboard'
 import {
   createDemoMidi,
   exportGuitarMappedMidi,
@@ -28,6 +16,7 @@ import {
 } from './lib/midi'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
+const DEMO_SONG = createDemoMidi()
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
@@ -35,21 +24,18 @@ function playableTracks(song: ParsedMidi) {
 
 function chooseDefaultTracks(song: ParsedMidi): [number, number | null] {
   const tracks = playableTracks(song)
+  const piano = tracks.find((track) => /piano|keys|keyboard|rhodes|wurl/i.test(track.name))
+  const melody = tracks.find((track) => /melody|melodie|lead|solo/i.test(track.name))
   const guitar = tracks.find((track) => /guitar/i.test(track.name))
-  const melody = tracks.find((track) => /melody/i.test(track.name))
   const fallback = [...tracks].sort((a, b) => b.notes.length - a.notes.length)
-  const first = guitar?.index ?? melody?.index ?? fallback[0]?.index ?? song.tracks[0]?.index ?? 0
+  const first = piano?.index ?? melody?.index ?? guitar?.index ?? fallback[0]?.index ?? song.tracks[0]?.index ?? 0
   const second =
     melody && melody.index !== first
       ? melody.index
-      : fallback.find((track) => track.index !== first)?.index ?? null
+      : piano && piano.index !== first
+        ? piano.index
+        : fallback.find((track) => track.index !== first)?.index ?? null
   return [first, second]
-}
-
-function formatTime(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  const wholeSeconds = Math.floor(seconds % 60)
-  return `${minutes}:${String(wholeSeconds).padStart(2, '0')}`
 }
 
 function safeFileName(value: string) {
@@ -61,28 +47,49 @@ function trackLabel(track: MidiTrack) {
   return `${track.name || `Track ${track.index + 1}`} - ${track.notes.length} notes - ${channelText}`
 }
 
+function currentMarkerText(song: ParsedMidi, currentTime: number) {
+  let active = ''
+  for (const marker of song.markers) {
+    if (marker.type !== 'marker') continue
+    if (marker.time <= currentTime + 0.02) active = marker.text
+    else break
+  }
+  return active
+}
+
+function clampTime(time: number, song: ParsedMidi) {
+  return Math.min(song.duration, Math.max(0, time))
+}
+
 function App() {
-  const [songs, setSongs] = useState<ParsedMidi[]>([createDemoMidi()])
+  const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
   const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<[number, number | null]>(() =>
-    chooseDefaultTracks(createDemoMidi()),
+    chooseDefaultTracks(DEMO_SONG),
   )
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
   const playOffsetRef = useRef(0)
   const rafRef = useRef<number | null>(null)
+  const lastAuditionKeyRef = useRef('')
+  const lastAuditionAtRef = useRef(0)
 
   const song = songs[songIndex] ?? songs[0]
   const tracks = playableTracks(song)
-  const selectedTracks = selectedTrackIndexes
-    .map((trackIndex) =>
-      trackIndex === null ? null : song.tracks.find((track) => track.index === trackIndex),
-    )
-    .filter((track): track is MidiTrack => Boolean(track))
+  const selectedTracks = useMemo(
+    () =>
+      selectedTrackIndexes
+        .map((trackIndex) =>
+          trackIndex === null ? null : song.tracks.find((track) => track.index === trackIndex),
+        )
+        .filter((track): track is MidiTrack => Boolean(track)),
+    [selectedTrackIndexes, song],
+  )
   const combinedNotes = useMemo(
     () =>
       selectedTracks
@@ -107,15 +114,13 @@ function App() {
     return colors
   }, [selectedTracks])
   const notePlacements = useMemo(() => mapNotesToFretboard(combinedNotes), [combinedNotes])
-  const mappedCount = combinedNotes.filter((note) => notePlacements.has(note.id)).length
-  const currentNotes = combinedNotes.filter(
-    (note) => note.time <= currentTime && note.time + note.duration >= currentTime,
-  )
+  const currentChord = currentMarkerText(song, currentTime)
 
   useEffect(() => {
     if (!song) return
     setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
+    lastAuditionKeyRef.current = ''
     stopPlayback()
   }, [songIndex, song])
 
@@ -163,14 +168,16 @@ function App() {
     void Tone.start()
     const synth = getSynth()
     const transport = Tone.getTransport()
+    const startTime = clampTime(time, song)
     transport.stop()
     transport.cancel(0)
     transport.seconds = 0
-    playOffsetRef.current = time
+    playOffsetRef.current = startTime
+    setCurrentTime(startTime)
 
     for (const note of combinedNotes) {
-      if (note.time + note.duration < time) continue
-      const start = Math.max(0, (note.time - time) / speed)
+      if (note.time + note.duration < startTime) continue
+      const start = Math.max(0, (note.time - startTime) / speed)
       const duration = Math.max(0.03, note.duration / speed)
       transport.schedule((scheduledTime) => {
         synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity * 0.78)
@@ -183,7 +190,7 @@ function App() {
 
   function pausePlayback() {
     const transport = Tone.getTransport()
-    const nextTime = Math.min(song.duration, playOffsetRef.current + transport.seconds * speed)
+    const nextTime = clampTime(playOffsetRef.current + transport.seconds * speed, song)
     transport.pause()
     setCurrentTime(nextTime)
     setIsPlaying(false)
@@ -196,6 +203,40 @@ function App() {
     transport.cancel(0)
     transport.seconds = 0
     setIsPlaying(false)
+  }
+
+  function auditionAt(time: number) {
+    const now = performance.now()
+    if (now - lastAuditionAtRef.current < 45) return
+
+    const activeNotes = combinedNotes
+      .filter((note) => note.time <= time + 0.035 && note.time + note.duration >= time - 0.035)
+      .slice(0, 8)
+    const key = activeNotes.map((note) => note.id).join('|')
+    if (!key || key === lastAuditionKeyRef.current) return
+
+    lastAuditionKeyRef.current = key
+    lastAuditionAtRef.current = now
+    void Tone.start().then(() => {
+      const synth = getSynth()
+      const start = Tone.now()
+      activeNotes.forEach((note, index) => {
+        synth.triggerAttackRelease(
+          noteName(note.midi),
+          0.12,
+          start + index * 0.004,
+          Math.max(0.18, note.velocity * 0.66),
+        )
+      })
+    })
+  }
+
+  function scrubTo(time: number) {
+    if (isPlaying) stopPlayback()
+    const nextTime = clampTime(time, song)
+    playOffsetRef.current = nextTime
+    setCurrentTime(nextTime)
+    auditionAt(nextTime)
   }
 
   async function loadFiles(fileList: FileList | File[]) {
@@ -212,6 +253,8 @@ function App() {
       setSongIndex(0)
       setSelectedTrackIndexes(chooseDefaultTracks(parsed[0]))
       setCurrentTime(0)
+      setSettingsOpen(false)
+      lastAuditionKeyRef.current = ''
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load MIDI file.')
     }
@@ -220,6 +263,7 @@ function App() {
   function updateTrackSlot(slot: 0 | 1, value: string) {
     stopPlayback()
     setCurrentTime(0)
+    lastAuditionKeyRef.current = ''
     setSelectedTrackIndexes((current) => {
       const next: [number, number | null] = [...current]
       if (slot === 0) next[0] = value === 'none' ? current[0] : Number(value)
@@ -242,27 +286,33 @@ function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+  function chooseSong(index: number) {
+    stopPlayback()
+    setSongIndex(index)
+    setCurrentTime(0)
+    lastAuditionKeyRef.current = ''
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     loadFiles(event.dataTransfer.files)
   }
 
   return (
-    <div
-      className="app-shell"
-      onDrop={handleDrop}
-      onDragOver={(event) => event.preventDefault()}
-    >
+    <div className="app-shell" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
       <header className="app-header">
-        <div className="brand">
+        <div className="brand" aria-label="Miditar">
           <div className="brand-mark">
-            <Guitar size={24} strokeWidth={2.2} />
+            <Guitar size={23} strokeWidth={2.2} />
           </div>
-          <div>
-            <h1>Miditar</h1>
-            <p>Chord-aware MIDI fretboard trainer</p>
-          </div>
+          <h1>Miditar</h1>
         </div>
+
+        <div className="song-heading">
+          <strong>{song.title}</strong>
+          {currentChord && <span>{currentChord}</span>}
+        </div>
+
         <div className="header-actions">
           <input
             ref={fileInputRef}
@@ -271,178 +321,143 @@ function App() {
             multiple
             onChange={(event) => event.target.files && loadFiles(event.target.files)}
           />
-          <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()}>
-            <FolderOpen size={18} />
-            Open
-          </button>
-          <button type="button" className="button secondary" onClick={exportMappedMidi} disabled={!mappedCount}>
-            <Download size={18} />
-            Export
-          </button>
-        </div>
-      </header>
-
-      <main className="workspace">
-        <aside className="library-panel">
-          <div className="panel-title">
-            <ListMusic size={18} />
-            Songs
-          </div>
-          <div className="song-list">
-            {songs.map((item, index) => (
-              <button
-                key={`${item.fileName}-${index}`}
-                type="button"
-                className={index === songIndex ? 'is-selected' : ''}
-                onClick={() => setSongIndex(index)}
-              >
-                <FileMusic size={16} />
-                <span>{item.title}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="track-grid">
-            {[0, 1].map((slot) => {
-              const selectedIndex = selectedTrackIndexes[slot as 0 | 1]
-              return (
-                <label className="field" key={slot}>
-                  <span>
-                    <i style={{ background: TRACK_COLORS[slot] }} />
-                    Track {slot === 0 ? 'A' : 'B'}
-                  </span>
-                  <select
-                    value={selectedIndex ?? 'none'}
-                    onChange={(event) => updateTrackSlot(slot as 0 | 1, event.target.value)}
-                  >
-                    {slot === 1 && <option value="none">None</option>}
-                    {tracks.map((track) => (
-                      <option key={track.index} value={track.index}>
-                        {trackLabel(track)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )
-            })}
-          </div>
-
-          <div className="mapping-status">
-            <strong>{mappedCount}</strong>
-            <span>of {combinedNotes.length} notes mapped</span>
-          </div>
-          <div className="string-map">
-            {GUITAR_STRINGS.map((string) => (
-              <div key={string.name}>
-                <i style={{ background: string.color }} />
-                <span>{string.name}</span>
-                <b>ch {string.channel}</b>
-              </div>
-            ))}
-          </div>
-          {error && <div className="error-text">{error}</div>}
-        </aside>
-
-        <section className="main-stage">
-          <SheetView
-            midi={song}
-            notes={combinedNotes}
-            markers={song.markers}
-            currentTime={currentTime}
-            trackColors={trackColors}
-          />
-          <FlowView
-            notes={combinedNotes}
-            markers={song.markers}
-            placements={notePlacements}
-            currentTime={currentTime}
-            duration={song.duration}
-            trackColors={trackColors}
-          />
-          <section className="neck-panel" aria-label="Live guitar neck">
-            <Fretboard
-              notes={combinedNotes}
-              placements={notePlacements}
-              currentTime={currentTime}
-              trackColors={trackColors}
-            />
-          </section>
-        </section>
-      </main>
-
-      <footer className="transport-bar">
-        <div className="transport-buttons">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Restart"
-            onClick={() => {
-              stopPlayback()
-              setCurrentTime(0)
-            }}
-          >
-            <SkipBack size={21} />
-          </button>
           <button
             type="button"
             className="play-button"
             aria-label={isPlaying ? 'Pause' : 'Play'}
             onClick={() => (isPlaying ? pausePlayback() : playFrom())}
           >
-            {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+            {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
           </button>
           <button
             type="button"
             className="icon-button"
-            aria-label="Stop"
-            onClick={() => {
-              stopPlayback()
-              setCurrentTime(0)
-            }}
+            aria-label="Settings"
+            onClick={() => setSettingsOpen((open) => !open)}
           >
-            <Square size={19} fill="currentColor" />
+            <Settings size={21} />
           </button>
         </div>
-        <label className="range-field timeline-range">
-          <span>{formatTime(currentTime)}</span>
-          <input
-            type="range"
-            min="0"
-            max={song.duration || 1}
-            step="0.01"
-            value={Math.min(currentTime, song.duration)}
-            onChange={(event) => {
-              stopPlayback()
-              setCurrentTime(Number(event.target.value))
-            }}
+      </header>
+
+      {settingsOpen && (
+        <div className="settings-layer">
+          <button
+            type="button"
+            className="settings-backdrop"
+            aria-label="Close settings"
+            onClick={() => setSettingsOpen(false)}
           />
-          <span>{formatTime(song.duration)}</span>
-        </label>
-        <label className="range-field speed-field">
-          <Gauge size={18} />
-          <input
-            type="range"
-            min="0.35"
-            max="1.5"
-            step="0.05"
-            value={speed}
-            onChange={(event) => {
-              const nextSpeed = Number(event.target.value)
-              if (isPlaying) pausePlayback()
-              setSpeed(nextSpeed)
-            }}
-          />
-          <span>{speed.toFixed(2)}x</span>
-        </label>
-        <div className="now-playing">
-          {currentNotes.length
-            ? currentNotes.map((note) => noteName(note.midi)).join(' ')
-            : virtualTrack?.name || 'No track'}
+          <aside className="settings-panel" aria-label="Settings">
+            <div className="settings-title">
+              <strong>Settings</strong>
+              <button type="button" className="icon-button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
+                <X size={19} />
+              </button>
+            </div>
+
+            <button type="button" className="button primary" onClick={() => fileInputRef.current?.click()}>
+              <FolderOpen size={18} />
+              Open MIDI
+            </button>
+
+            <button type="button" className="button secondary" onClick={exportMappedMidi} disabled={!virtualTrack}>
+              <Download size={18} />
+              Export Guitar MIDI
+            </button>
+
+            {songs.length > 1 && (
+              <label className="field">
+                <span>
+                  <FileMusic size={15} />
+                  Song
+                </span>
+                <select value={songIndex} onChange={(event) => chooseSong(Number(event.target.value))}>
+                  {songs.map((item, index) => (
+                    <option key={`${item.fileName}-${index}`} value={index}>
+                      {item.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <div className="track-grid">
+              {[0, 1].map((slot) => {
+                const selectedIndex = selectedTrackIndexes[slot as 0 | 1]
+                return (
+                  <label className="field" key={slot}>
+                    <span>
+                      <i className="track-dot" style={{ background: TRACK_COLORS[slot] }} />
+                      {slot === 0 ? 'Primary Track' : 'Secondary Track'}
+                    </span>
+                    <select
+                      value={selectedIndex ?? 'none'}
+                      onChange={(event) => updateTrackSlot(slot as 0 | 1, event.target.value)}
+                    >
+                      {slot === 1 && <option value="none">None</option>}
+                      {tracks.map((track) => (
+                        <option key={track.index} value={track.index}>
+                          {trackLabel(track)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )
+              })}
+            </div>
+
+            <label className="range-field">
+              <span>Playback Speed</span>
+              <input
+                type="range"
+                min="0.35"
+                max="1.5"
+                step="0.05"
+                value={speed}
+                onChange={(event) => {
+                  const nextSpeed = Number(event.target.value)
+                  if (isPlaying) pausePlayback()
+                  setSpeed(nextSpeed)
+                }}
+              />
+              <b>{speed.toFixed(2)}x</b>
+            </label>
+
+            {error && <div className="error-text">{error}</div>}
+          </aside>
         </div>
-        <button type="button" className="button upload-compact" onClick={() => fileInputRef.current?.click()}>
-          <Upload size={18} />
-        </button>
-      </footer>
+      )}
+
+      <main className="main-stage">
+        <SheetView
+          midi={song}
+          notes={combinedNotes}
+          markers={song.markers}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onScrub={scrubTo}
+          trackColors={trackColors}
+        />
+        <FlowView
+          midi={song}
+          notes={combinedNotes}
+          markers={song.markers}
+          placements={notePlacements}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onScrub={scrubTo}
+          trackColors={trackColors}
+        />
+        <section className="neck-panel" aria-label="Live guitar neck">
+          <Fretboard
+            notes={combinedNotes}
+            placements={notePlacements}
+            currentTime={currentTime}
+            trackColors={trackColors}
+          />
+        </section>
+      </main>
     </div>
   )
 }

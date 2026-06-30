@@ -194,6 +194,10 @@ export function secondsToTicks(midi: ParsedMidi, seconds: number) {
   return Math.round(lastTick + (elapsed * 1000000 * midi.ppq) / mpq)
 }
 
+export function midiTicksToSeconds(midi: ParsedMidi, tick: number) {
+  return ticksToSeconds(tick, midi.tempos, midi.ppq)
+}
+
 export function noteName(midi: number) {
   const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
   const octave = Math.floor(midi / 12) - 1
