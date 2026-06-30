@@ -1,10 +1,11 @@
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import { Download, FileMusic, FolderOpen, Guitar, Pause, Play, Settings, X } from 'lucide-react'
+import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
 import { SheetView } from './components/SheetView'
+import { FRETBOARD_THEMES, type FretboardThemeId } from './components/fretboardThemes'
 import { mapNotesToFretboard } from './lib/fretboard'
 import {
   createDemoMidi,
@@ -70,6 +71,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
+  const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -424,6 +426,23 @@ function App() {
               <b>{speed.toFixed(2)}x</b>
             </label>
 
+            <label className="field">
+              <span>
+                <Palette size={15} />
+                Fretboard Theme
+              </span>
+              <select
+                value={fretboardTheme}
+                onChange={(event) => setFretboardTheme(event.target.value as FretboardThemeId)}
+              >
+                {FRETBOARD_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {error && <div className="error-text">{error}</div>}
           </aside>
         </div>
@@ -449,12 +468,13 @@ function App() {
           onScrub={scrubTo}
           trackColors={trackColors}
         />
-        <section className="neck-panel" aria-label="Live guitar neck">
+        <section className="neck-panel" data-neck-theme={fretboardTheme} aria-label="Live guitar neck">
           <Fretboard
             notes={combinedNotes}
             placements={notePlacements}
             currentTime={currentTime}
             trackColors={trackColors}
+            themeId={fretboardTheme}
           />
         </section>
       </main>

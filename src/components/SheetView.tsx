@@ -56,7 +56,6 @@ export function SheetView({
   const currentTick = secondsToTicks(midi, currentTime)
   const measureTicks = getMeasureTicks(midi)
   const measureCount = Math.max(1, Math.ceil(midi.durationTicks / measureTicks))
-  const currentMeasure = clamp(Math.floor(currentTick / measureTicks), 0, measureCount - 1)
   const minPitch = notes.length ? Math.min(...notes.map((note) => note.midi)) - 2 : 48
   const maxPitch = notes.length ? Math.max(...notes.map((note) => note.midi)) + 2 : 76
   const marker = currentMarker(markers, currentTime)
@@ -105,15 +104,10 @@ export function SheetView({
           <div className="sheet-system">
             <div className="sheet-pad" aria-hidden="true" />
             {measures.map((measure) => {
-              const playhead =
-                currentTick >= measure.start && currentTick < measure.end
-                  ? ((currentTick - measure.start) / measureTicks) * MEASURE_WIDTH
-                  : null
-
               return (
                 <svg
                   key={measure.index}
-                  className={`sheet-measure ${measure.index === currentMeasure ? 'is-current' : ''}`}
+                  className="sheet-measure"
                   data-measure={measure.index}
                   viewBox={`0 0 ${MEASURE_WIDTH} ${MEASURE_HEIGHT}`}
                   role="img"
@@ -166,7 +160,6 @@ export function SheetView({
                       </g>
                     )
                   })}
-                  {playhead !== null && <line x1={playhead} x2={playhead} y1="26" y2="126" className="local-playhead" />}
                 </svg>
               )
             })}

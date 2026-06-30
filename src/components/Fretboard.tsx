@@ -10,6 +10,7 @@ import {
   fretboardPoint,
   stringY,
 } from '../lib/fretboardLayout'
+import { getFretboardTheme, type FretboardThemeId } from './fretboardThemes'
 
 type FretboardProps = {
   notes: MidiNote[]
@@ -17,12 +18,22 @@ type FretboardProps = {
   currentTime: number
   trackColors?: Record<number, string>
   maxFret?: number
+  themeId?: FretboardThemeId
 }
 
-export function Fretboard({ notes, placements, currentTime, trackColors = {}, maxFret = 22 }: FretboardProps) {
+export function Fretboard({
+  notes,
+  placements,
+  currentTime,
+  trackColors = {},
+  maxFret = 22,
+  themeId = 'dark',
+}: FretboardProps) {
   const activeNotes = notes.filter(
     (note) => note.time <= currentTime + 0.03 && note.time + note.duration >= currentTime - 0.03,
   )
+  const theme = getFretboardTheme(themeId)
+  const gradientId = `neck-${theme.id}`
 
   return (
     <svg
@@ -32,13 +43,13 @@ export function Fretboard({ notes, placements, currentTime, trackColors = {}, ma
       aria-label="Guitar fretboard"
     >
       <defs>
-        <linearGradient id="neck" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0" stopColor="#9b6a3b" />
-          <stop offset="1" stopColor="#5f3f25" />
+        <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stopColor={theme.neckStart} />
+          <stop offset="1" stopColor={theme.neckEnd} />
         </linearGradient>
       </defs>
-      <rect x="48" y="10" width="1004" height="218" rx="8" fill="url(#neck)" />
-      <rect x={FRETBOARD_LEFT - 7} y="16" width="12" height="205" rx="3" fill="#eee7d3" />
+      <rect x="48" y="10" width="1004" height="218" rx="8" fill={`url(#${gradientId})`} />
+      <rect x={FRETBOARD_LEFT - 7} y="16" width="12" height="205" rx="3" fill={theme.nut} />
       {Array.from({ length: maxFret + 1 }).map((_, fret) => {
         const x = fretLineX(fret, maxFret)
         const strong = [0, 3, 5, 7, 9, 12, 15, 17].includes(fret)
@@ -49,11 +60,19 @@ export function Fretboard({ notes, placements, currentTime, trackColors = {}, ma
               x2={x}
               y1="22"
               y2="216"
-              stroke={fret === 0 ? '#f6efda' : '#d2c0a0'}
+              stroke={fret === 0 ? theme.nut : theme.fret}
               strokeWidth={fret === 0 ? 4 : 2}
             />
             {fret > 0 && (
-              <text x={fretboardNoteX(fret, maxFret)} y="250" textAnchor="middle" className="fret-number">
+              <text
+                x={fretboardNoteX(fret, maxFret)}
+                y="250"
+                textAnchor="middle"
+                className="fret-number"
+                stroke={theme.fretNumberStroke}
+                strokeWidth="4"
+                style={{ fill: theme.fretNumber, paintOrder: 'stroke fill' }}
+              >
                 {fret}
               </text>
             )}
@@ -62,7 +81,8 @@ export function Fretboard({ notes, placements, currentTime, trackColors = {}, ma
                 cx={fretboardNoteX(fret, maxFret)}
                 cy="126"
                 r={fret === 12 ? 8 : 5}
-                fill="rgba(255,255,255,.28)"
+                fill={theme.marker}
+                opacity={theme.markerOpacity}
               />
             )}
           </g>
@@ -77,11 +97,18 @@ export function Fretboard({ notes, placements, currentTime, trackColors = {}, ma
               x2={FRETBOARD_VIEW_WIDTH - FRETBOARD_RIGHT}
               y1={y}
               y2={y}
-              stroke="#f5f0dc"
+              stroke={theme.string}
               strokeWidth={Math.max(1.5, 4.8 - string.index * 0.42)}
               opacity="0.92"
             />
-            <text x="28" y={y + 5} className="string-name">
+            <text
+              x="28"
+              y={y + 5}
+              className="string-name"
+              stroke={theme.fretNumberStroke}
+              strokeWidth="3"
+              style={{ fill: theme.stringName, paintOrder: 'stroke fill' }}
+            >
               {string.name}
             </text>
           </g>

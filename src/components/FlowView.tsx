@@ -17,6 +17,10 @@ type FlowViewProps = {
 
 const PIXELS_PER_SECOND = 168
 
+function timelineTop(midi: ParsedMidi, time: number) {
+  return Math.max(0, midi.duration - time) * PIXELS_PER_SECOND
+}
+
 function currentMarker(markers: MidiMarker[], currentTime: number) {
   let active: MidiMarker | null = null
   for (const marker of markers) {
@@ -45,18 +49,18 @@ export function FlowView({
   useEffect(() => {
     const container = scrollRef.current
     if (!container) return
-    const targetTop = currentTime * PIXELS_PER_SECOND
+    const targetTop = timelineTop(midi, currentTime)
     programmaticScrollRef.current = true
     container.scrollTop = Math.max(0, targetTop)
     window.setTimeout(() => {
       programmaticScrollRef.current = false
     }, 80)
-  }, [currentTime])
+  }, [currentTime, midi])
 
   function handleScroll() {
     const container = scrollRef.current
     if (!container || programmaticScrollRef.current) return
-    onScrub(Math.min(midi.duration, Math.max(0, container.scrollTop / PIXELS_PER_SECOND)))
+    onScrub(Math.min(midi.duration, Math.max(0, midi.duration - container.scrollTop / PIXELS_PER_SECOND)))
   }
 
   return (
@@ -82,7 +86,7 @@ export function FlowView({
                 <div
                   key={`${event.tick}-${event.text}`}
                   className="falling-chord"
-                  style={{ top: event.time * PIXELS_PER_SECOND }}
+                  style={{ top: timelineTop(midi, event.time) }}
                 >
                   {event.text}
                 </div>
@@ -93,7 +97,7 @@ export function FlowView({
               const point = fretboardPoint(placement)
               const string = GUITAR_STRINGS[placement.stringIndex]
               const x = (point.x / 1080) * 100
-              const y = note.time * PIXELS_PER_SECOND
+              const y = timelineTop(midi, note.time)
               const height = Math.max(22, note.duration * PIXELS_PER_SECOND)
               const active = note.time <= currentTime && note.time + note.duration >= currentTime
               const trackColor = trackColors[note.trackIndex] ?? string.color
