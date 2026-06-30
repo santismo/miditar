@@ -9,15 +9,16 @@ Live app: https://santismo.github.io/miditar/
 - Open one or more `.mid` / `.midi` files.
 - Dark mode by default.
 - Remembers the most recently loaded MIDI files in the current browser.
-- Single settings panel for file loading, track selection, Smart Guitar mode, playback speed, MIDI density, export, and fretboard theme.
+- Single settings panel for file loading, track selection, Smart Guitar mode, sound selection, playback speed, MIDI density, export, and fretboard theme.
 - Primary, secondary, and bass MIDI track selectors for viewing one, two, or three parts on one neck.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
-- Scrollable sheet-style view with chord markers above each measure.
-- Falling-note fretboard view with chord markers in the flow lane and adjustable density.
+- Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
+- VexFlow-rendered notation with clef, time signature, rests, noteheads, stems, beams, and accidentals.
+- Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, and a playhead at the fretboard edge.
 - Live guitar fretboard with selectable visual themes.
 - Mobile-friendly three-view layout: sheet strip, falling notes, and fretboard stay visible together.
 - Playback from the header with manual scrubbing from the sheet or falling-note views.
-- Safari and mobile browser install metadata with Miditar app icons.
+- Safari and mobile browser install metadata with Miditar app icons matching the header logo.
 - Guitar mapping for standard tuning: E4, B3, G3, D3, A2, E2.
 - Mapped MIDI export with chord markers preserved and string channels assigned:
   - channel 11: high E
@@ -53,6 +54,8 @@ npm run lint
 Miditar uses MIDI marker events as the source of truth for chord labels in the falling-note view, sheet view, and mapped MIDI export.
 
 The string/fret mapping is heuristic. Smart Guitar mode favors reachable chord spans, avoids duplicate strings in same-tick chords, keeps voicings in string order, allows open strings, fits out-of-range notes by octave, and biases chord placement toward the selected melody track when available.
+
+Notation is quantized from MIDI timing for readable measure-level engraving. Dense overlapping MIDI passages are grouped into same-start chords where possible.
 
 ## License
 

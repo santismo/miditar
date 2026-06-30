@@ -17,6 +17,13 @@ import {
   type ParsedMidi,
 } from './lib/midi'
 import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
+import {
+  isSampleInstrument,
+  playbackInstrumentLabel,
+  PLAYBACK_INSTRUMENTS,
+  SamplePlaybackEngine,
+  type PlaybackInstrumentId,
+} from './lib/sampleEngine'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 const DEMO_SONG = createDemoMidi()
@@ -28,6 +35,10 @@ const FLOW_DENSITY_STEP = 12
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
+type ActiveAudioEngine =
+  | { kind: 'synth'; synth: Tone.PolySynth }
+  | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: Exclude<PlaybackInstrumentId, 'synth'> }
+type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 
 function playableTracks(song: ParsedMidi) {
@@ -88,18 +99,22 @@ function App() {
   const [speed, setSpeed] = useState(1)
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
+  const [playbackInstrumentId, setPlaybackInstrumentId] =
+    useState<PlaybackInstrumentId>('sample:guitar-acoustic')
   const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
+  const [audioStatus, setAudioStatus] = useState('')
   const [recentMidiFiles, setRecentMidiFiles] = useState<RecentMidiFile[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
+  const sampleEngineRef = useRef<SamplePlaybackEngine | null>(null)
   const playOffsetRef = useRef(0)
   const playStartedAtRef = useRef(0)
   const playbackRunRef = useRef(0)
   const scrubRunRef = useRef(0)
   const rafRef = useRef<number | null>(null)
-  const scrubAuditionRef = useRef<Map<string, string>>(new Map())
+  const scrubAuditionRef = useRef<Map<string, ScrubVoice>>(new Map())
   const scrubReleaseTimerRef = useRef<number | null>(null)
 
   const song = songs[songIndex] ?? songs[0]
@@ -198,6 +213,7 @@ function App() {
       stopPlayback()
       releaseAllScrubAudition()
       synthRef.current?.dispose()
+      sampleEngineRef.current?.dispose()
     }
   }, [])
 
@@ -233,9 +249,51 @@ function App() {
     return synthRef.current
   }
 
-  function mappedNoteName(note: MidiNote) {
+  function getSampleEngine() {
+    const rawContext = Tone.getContext().rawContext
+    if (!rawContext || !('createGain' in rawContext)) {
+      throw new Error('Sample playback is not available in this browser.')
+    }
+
+    const context = rawContext as AudioContext
+    if (!sampleEngineRef.current || sampleEngineRef.current.context !== context) {
+      sampleEngineRef.current?.dispose()
+      sampleEngineRef.current = new SamplePlaybackEngine(context)
+    }
+    return sampleEngineRef.current
+  }
+
+  async function prepareAudioEngine(): Promise<ActiveAudioEngine> {
+    await Tone.start()
+    if (!isSampleInstrument(playbackInstrumentId)) {
+      setAudioStatus('')
+      return { kind: 'synth', synth: getSynth() }
+    }
+
+    try {
+      const engine = getSampleEngine()
+      const label = playbackInstrumentLabel(playbackInstrumentId)
+      setAudioStatus(`Loading ${label}...`)
+      await engine.load(playbackInstrumentId, (loaded, total) => {
+        setAudioStatus(`${label} ${loaded}/${total}`)
+      })
+      setAudioStatus(`${label} ready`)
+      return { kind: 'sample', engine, instrumentId: playbackInstrumentId }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Sample instrument unavailable.'
+      setAudioStatus(`Sample unavailable; using Synth`)
+      setError(message)
+      return { kind: 'synth', synth: getSynth() }
+    }
+  }
+
+  function mappedMidi(note: MidiNote) {
     const placement = notePlacements.get(note.id)
-    return noteName(placement?.midi ?? note.midi)
+    return placement?.midi ?? note.midi
+  }
+
+  function mappedNoteName(note: MidiNote) {
+    return noteName(mappedMidi(note))
   }
 
   function clearScrubReleaseTimer() {
@@ -247,9 +305,11 @@ function App() {
 
   function releaseScrubAudition(retainIds = new Set<string>()) {
     const synth = synthRef.current
-    for (const [noteId, pitch] of scrubAuditionRef.current) {
+    const sampleEngine = sampleEngineRef.current
+    for (const [noteId, voice] of scrubAuditionRef.current) {
       if (retainIds.has(noteId)) continue
-      synth?.triggerRelease(pitch)
+      if (voice.kind === 'synth') synth?.triggerRelease(voice.pitch)
+      else sampleEngine?.triggerRelease(noteId)
       scrubAuditionRef.current.delete(noteId)
     }
     if (!scrubAuditionRef.current.size) clearScrubReleaseTimer()
@@ -283,16 +343,28 @@ function App() {
       return
     }
 
-    void Tone.start().then(() => {
+    void prepareAudioEngine().then((engine) => {
       if (scrubRunRef.current !== runId) return
-      const synth = getSynth()
       releaseScrubAudition(activeIds)
-      const start = Tone.now()
+      const start = engine.kind === 'sample' ? engine.engine.context.currentTime + 0.006 : Tone.now()
       activeNotes.forEach((note, index) => {
         if (scrubAuditionRef.current.has(note.id)) return
+        const velocity = Math.max(0.18, note.velocity * 0.66)
+        if (engine.kind === 'sample') {
+          scrubAuditionRef.current.set(note.id, { kind: 'sample' })
+          void engine.engine.triggerAttack(
+            engine.instrumentId,
+            note.id,
+            mappedMidi(note),
+            start + index * 0.004,
+            velocity,
+          )
+          return
+        }
+
         const pitch = mappedNoteName(note)
-        scrubAuditionRef.current.set(note.id, pitch)
-        synth.triggerAttack(pitch, start + index * 0.004, Math.max(0.18, note.velocity * 0.66))
+        scrubAuditionRef.current.set(note.id, { kind: 'synth', pitch })
+        engine.synth.triggerAttack(pitch, start + index * 0.004, velocity)
       })
       scheduleScrubRelease()
     })
@@ -311,9 +383,8 @@ function App() {
     setError('')
 
     try {
-      await Tone.start()
+      const engine = await prepareAudioEngine()
       if (playbackRunRef.current !== runId) return
-      const synth = getSynth()
       const transport = Tone.getTransport()
       const audioStartTime = clampTime(
         startTime + ((performance.now() - playStartedAtRef.current) / 1000) * speed,
@@ -331,7 +402,18 @@ function App() {
         const start = Math.max(0, (note.time - audioStartTime) / speed)
         const duration = Math.max(0.03, note.duration / speed)
         transport.schedule((scheduledTime) => {
-          synth.triggerAttackRelease(mappedNoteName(note), duration, scheduledTime, note.velocity * 0.78)
+          if (engine.kind === 'sample') {
+            void engine.engine.triggerAttackRelease(
+              engine.instrumentId,
+              `play:${note.id}`,
+              mappedMidi(note),
+              scheduledTime,
+              duration,
+              note.velocity * 0.78,
+            )
+            return
+          }
+          engine.synth.triggerAttackRelease(mappedNoteName(note), duration, scheduledTime, note.velocity * 0.78)
         }, start)
       }
 
@@ -347,6 +429,7 @@ function App() {
   function pausePlayback() {
     playbackRunRef.current += 1
     releaseAllScrubAudition()
+    sampleEngineRef.current?.releaseAll()
     const transport = Tone.getTransport()
     const elapsed = (performance.now() - playStartedAtRef.current) / 1000
     const nextTime = clampTime(playOffsetRef.current + elapsed * speed, song)
@@ -358,6 +441,7 @@ function App() {
   function stopPlayback() {
     playbackRunRef.current += 1
     releaseAllScrubAudition()
+    sampleEngineRef.current?.releaseAll()
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     const transport = Tone.getTransport()
     transport.stop()
@@ -417,6 +501,15 @@ function App() {
   function updateFlowDensity(value: number) {
     if (!Number.isFinite(value)) return
     setFlowDensity(clampFlowDensity(value))
+  }
+
+  function updatePlaybackInstrument(value: PlaybackInstrumentId) {
+    stopPlayback()
+    releaseAllScrubAudition()
+    sampleEngineRef.current?.releaseAll()
+    setAudioStatus('')
+    setError('')
+    setPlaybackInstrumentId(value)
   }
 
   function exportMappedMidi() {
@@ -568,6 +661,23 @@ function App() {
               />
             </label>
 
+            <label className="field">
+              <span>
+                <Guitar size={15} />
+                Sound
+              </span>
+              <select
+                value={playbackInstrumentId}
+                onChange={(event) => updatePlaybackInstrument(event.target.value as PlaybackInstrumentId)}
+              >
+                {PLAYBACK_INSTRUMENTS.map((instrument) => (
+                  <option key={instrument.id} value={instrument.id}>
+                    {instrument.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className="range-field">
               <span>Playback Speed</span>
               <input
@@ -633,6 +743,7 @@ function App() {
             </label>
 
             {error && <div className="error-text">{error}</div>}
+            {audioStatus && <div className="status-text">{audioStatus}</div>}
           </aside>
         </div>
       )}

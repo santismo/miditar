@@ -2,7 +2,11 @@ import { useEffect, useRef } from 'react'
 import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
 import { noteName } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
-import { fretboardPoint } from '../lib/fretboardLayout'
+import {
+  FRETBOARD_VIEW_WIDTH,
+  fretboardNoteX,
+  fretLineX,
+} from '../lib/fretboardLayout'
 
 type FlowViewProps = {
   midi: ParsedMidi
@@ -49,6 +53,7 @@ export function FlowView({
   const userScrollTimerRef = useRef<number | null>(null)
   const marker = currentMarker(markers, currentTime)
   const contentHeight = Math.max(520, midi.duration * pixelsPerSecond)
+  const maxFret = 22
 
   useEffect(() => {
     const container = scrollRef.current
@@ -102,12 +107,12 @@ export function FlowView({
           onTouchEnd={settleUserScroll}
           onTouchCancel={settleUserScroll}
         >
-          <div className="flow-spacer" />
+          <div className="flow-spacer flow-spacer-start" />
           <div className="flow-content" style={{ height: contentHeight }}>
-            <div className="string-guides" aria-hidden="true">
-              {GUITAR_STRINGS.map((string) => (
-                <div key={string.name} style={{ left: `${6 + string.index * 17.6}%` }}>
-                  {string.name}
+            <div className="fret-guides" aria-hidden="true">
+              {Array.from({ length: maxFret + 1 }).map((_, fret) => (
+                <div key={fret} style={{ left: `${(fretLineX(fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100}%` }}>
+                  {fret > 0 && [3, 5, 7, 9, 12, 15, 17].includes(fret) ? fret : ''}
                 </div>
               ))}
             </div>
@@ -125,9 +130,11 @@ export function FlowView({
             {notes.map((note) => {
               const placement = placements.get(note.id)
               if (!placement) return null
-              const point = fretboardPoint(placement)
               const string = GUITAR_STRINGS[placement.stringIndex]
-              const x = (point.x / 1080) * 100
+              const x = (fretboardNoteX(placement.fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100
+              const fretStart = placement.fret <= 0 ? fretLineX(0, maxFret) - 42 : fretLineX(placement.fret - 1, maxFret)
+              const fretEnd = placement.fret <= 0 ? fretLineX(0, maxFret) + 10 : fretLineX(placement.fret, maxFret)
+              const width = Math.max(10, ((fretEnd - fretStart) / FRETBOARD_VIEW_WIDTH) * 100)
               const y = timelineTop(midi, note.time, pixelsPerSecond)
               const height = Math.max(16, note.duration * pixelsPerSecond)
               const active = note.time <= currentTime && note.time + note.duration >= currentTime
@@ -140,6 +147,7 @@ export function FlowView({
                   className={`falling-note ${active ? 'is-active' : ''}`}
                   style={{
                     left: `${x}%`,
+                    width: `max(10px, ${width}%)`,
                     top: y,
                     height,
                     borderColor: string.color,
@@ -152,9 +160,9 @@ export function FlowView({
               )
             })}
           </div>
-          <div className="flow-spacer" />
+          <div className="flow-spacer flow-spacer-end" />
         </div>
-        <div className="flow-center-playhead" aria-hidden="true" />
+        <div className="flow-fretboard-playhead" aria-hidden="true" />
       </div>
     </section>
   )

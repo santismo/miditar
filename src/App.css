@@ -305,6 +305,12 @@
   line-height: 1.35;
 }
 
+.status-text {
+  color: #a7d9ff;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .main-stage {
   min-width: 0;
   min-height: 0;
@@ -391,7 +397,7 @@
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   padding-block: 8px;
 }
 
@@ -401,49 +407,56 @@
 }
 
 .sheet-measure {
-  width: 260px;
-  height: min(100%, 150px);
-  flex: 0 0 260px;
+  position: relative;
+  width: 300px;
+  height: min(100%, 154px);
+  flex: 0 0 300px;
+  overflow: hidden;
+  border: 1px solid #344030;
+  border-radius: 6px;
+  background: #151a15;
 }
 
-.sheet-measure rect {
-  fill: #151a15;
-  stroke: #344030;
+.sheet-notation {
+  position: absolute;
+  inset: 0;
 }
 
-.sheet-measure line {
-  stroke: #6e7a66;
-  stroke-width: 1;
+.sheet-notation svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
-.sheet-measure .barline {
-  stroke-width: 1.5;
+.sheet-notation svg path,
+.sheet-notation svg line,
+.sheet-notation svg rect,
+.sheet-notation svg text {
+  fill: #d8e0d0;
+  stroke: #d8e0d0;
 }
 
 .measure-number {
-  fill: #88927f;
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  color: #88927f;
   font-size: 11px;
   font-weight: 720;
+  pointer-events: none;
 }
 
 .sheet-chord {
-  fill: #f0c65a;
+  position: absolute;
+  top: 16px;
+  max-width: 78px;
+  overflow: hidden;
+  color: #f0c65a;
   font-size: 13px;
   font-weight: 820;
-}
-
-.sheet-note {
-  stroke: #090b08;
-  stroke-width: 1.5;
-}
-
-.sheet-duration {
-  opacity: 0.9;
-}
-
-.stem {
-  stroke: #d6ddcb;
-  stroke-width: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .center-playhead {
@@ -480,7 +493,15 @@
 }
 
 .flow-spacer {
-  height: 50%;
+  height: 0;
+}
+
+.flow-spacer-start {
+  height: 100%;
+}
+
+.flow-spacer-end {
+  height: 0;
 }
 
 .flow-content {
@@ -489,20 +510,20 @@
   margin-inline: 10px;
 }
 
-.string-guides {
+.fret-guides {
   position: absolute;
-  inset: 0 4%;
+  inset: 0;
   pointer-events: none;
 }
 
-.string-guides div {
+.fret-guides div {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 1px;
-  color: #64705d;
-  background: rgba(155, 168, 146, 0.17);
-  font-size: 11px;
+  color: #6f7b68;
+  background: rgba(155, 168, 146, 0.16);
+  font-size: 10px;
   font-weight: 720;
   text-align: center;
 }
@@ -524,7 +545,6 @@
 .falling-note {
   position: absolute;
   z-index: 3;
-  width: 20px;
   min-height: 16px;
   transform: translate(-50%, -100%);
   border: 1.5px solid;
@@ -554,18 +574,18 @@
   box-shadow: 0 0 0 6px rgba(240, 198, 90, 0.18), 0 16px 24px rgba(0, 0, 0, 0.42);
 }
 
-.flow-center-playhead {
+.flow-fretboard-playhead {
   position: absolute;
   left: 0;
   right: 0;
-  top: 50%;
+  bottom: 0;
   height: 0;
   border-top: 2px solid #ff6659;
   box-shadow: 0 0 18px rgba(255, 102, 89, 0.3);
   pointer-events: none;
 }
 
-.flow-center-playhead::after {
+.flow-fretboard-playhead::after {
   content: "";
   position: absolute;
   left: 50%;
@@ -680,7 +700,7 @@
   }
 
   .sheet-system {
-    gap: 6px;
+    gap: 7px;
     padding-block: 6px;
   }
 
@@ -689,12 +709,12 @@
   }
 
   .sheet-measure {
-    width: 250px;
-    flex-basis: 250px;
+    width: 300px;
+    flex-basis: 300px;
   }
 
   .falling-note {
-    width: 18px;
+    min-width: 10px;
   }
 
   .neck-panel {
@@ -724,7 +744,7 @@
   }
 
   .sheet-measure {
-    width: 238px;
-    flex-basis: 238px;
+    width: 300px;
+    flex-basis: 300px;
   }
 }
