@@ -1,6 +1,6 @@
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
+import { Download, FileMusic, FolderOpen, Guitar, Minus, Palette, Pause, Play, Plus, Settings, X } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
@@ -16,29 +16,40 @@ import {
   type MidiTrack,
   type ParsedMidi,
 } from './lib/midi'
+import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 const DEMO_SONG = createDemoMidi()
 const MAX_SCRUB_AUDITION_NOTES = 12
+const DEFAULT_FLOW_DENSITY = 168
+const MIN_FLOW_DENSITY = 88
+const MAX_FLOW_DENSITY = 320
+const FLOW_DENSITY_STEP = 12
+
+type TrackSelection = [number | null, number | null, number | null]
+type TrackSlot = 0 | 1 | 2
+const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
 }
 
-function chooseDefaultTracks(song: ParsedMidi): [number, number | null] {
+function chooseDefaultTracks(song: ParsedMidi): TrackSelection {
   const tracks = playableTracks(song)
   const piano = tracks.find((track) => /piano|keys|keyboard|rhodes|wurl/i.test(track.name))
   const melody = tracks.find((track) => /melody|melodie|lead|solo/i.test(track.name))
+  const bass = tracks.find((track) => /bass|upright|contrabass/i.test(track.name))
   const guitar = tracks.find((track) => /guitar/i.test(track.name))
   const fallback = [...tracks].sort((a, b) => b.notes.length - a.notes.length)
-  const first = piano?.index ?? melody?.index ?? guitar?.index ?? fallback[0]?.index ?? song.tracks[0]?.index ?? 0
+  const first = piano?.index ?? melody?.index ?? guitar?.index ?? fallback[0]?.index ?? null
   const second =
     melody && melody.index !== first
       ? melody.index
       : piano && piano.index !== first
         ? piano.index
         : fallback.find((track) => track.index !== first)?.index ?? null
-  return [first, second]
+  const third = bass && bass.index !== first && bass.index !== second ? bass.index : null
+  return [first, second, third]
 }
 
 function safeFileName(value: string) {
@@ -64,39 +75,47 @@ function clampTime(time: number, song: ParsedMidi) {
   return Math.min(song.duration, Math.max(0, time))
 }
 
+function clampFlowDensity(value: number) {
+  return Math.min(MAX_FLOW_DENSITY, Math.max(MIN_FLOW_DENSITY, Math.round(value)))
+}
+
 function App() {
   const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
-  const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<[number, number | null]>(() =>
-    chooseDefaultTracks(DEMO_SONG),
-  )
+  const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<TrackSelection>(() => chooseDefaultTracks(DEMO_SONG))
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
+  const [smartGuitarMode, setSmartGuitarMode] = useState(true)
+  const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
   const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
+  const [recentMidiFiles, setRecentMidiFiles] = useState<RecentMidiFile[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
   const playOffsetRef = useRef(0)
   const playStartedAtRef = useRef(0)
   const playbackRunRef = useRef(0)
+  const scrubRunRef = useRef(0)
   const rafRef = useRef<number | null>(null)
-  const lastAuditionKeyRef = useRef('')
-  const lastAuditionAtRef = useRef(0)
-  const lastScrubTimeRef = useRef(0)
+  const scrubAuditionRef = useRef<Map<string, string>>(new Map())
+  const scrubReleaseTimerRef = useRef<number | null>(null)
 
   const song = songs[songIndex] ?? songs[0]
   const tracks = playableTracks(song)
-  const selectedTracks = useMemo(
-    () =>
-      selectedTrackIndexes
-        .map((trackIndex) =>
-          trackIndex === null ? null : song.tracks.find((track) => track.index === trackIndex),
-        )
-        .filter((track): track is MidiTrack => Boolean(track)),
-    [selectedTrackIndexes, song],
-  )
+  const selectedTracks = useMemo(() => {
+    const seen = new Set<number>()
+    const selected: MidiTrack[] = []
+    for (const trackIndex of selectedTrackIndexes) {
+      if (trackIndex === null || seen.has(trackIndex)) continue
+      const track = song.tracks.find((item) => item.index === trackIndex)
+      if (!track) continue
+      selected.push(track)
+      seen.add(track.index)
+    }
+    return selected
+  }, [selectedTrackIndexes, song])
   const combinedNotes = useMemo(
     () =>
       selectedTracks
@@ -115,26 +134,69 @@ function App() {
     : null
   const trackColors = useMemo(() => {
     const colors: Record<number, string> = {}
-    selectedTracks.forEach((track, index) => {
-      colors[track.index] = TRACK_COLORS[index % TRACK_COLORS.length]
+    selectedTrackIndexes.forEach((trackIndex, index) => {
+      if (trackIndex === null || colors[trackIndex]) return
+      colors[trackIndex] = TRACK_COLORS[index % TRACK_COLORS.length]
     })
     return colors
-  }, [selectedTracks])
-  const notePlacements = useMemo(() => mapNotesToFretboard(combinedNotes), [combinedNotes])
+  }, [selectedTrackIndexes])
+  const melodyTrackIndexes = useMemo(() => {
+    const indexes = new Set<number>()
+    const melodyTrack = selectedTrackIndexes[1]
+    if (melodyTrack !== null) indexes.add(melodyTrack)
+    return indexes
+  }, [selectedTrackIndexes])
+  const bassTrackIndexes = useMemo(() => {
+    const indexes = new Set<number>()
+    const bassTrack = selectedTrackIndexes[2]
+    if (bassTrack !== null) indexes.add(bassTrack)
+    return indexes
+  }, [selectedTrackIndexes])
+  const notePlacements = useMemo(
+    () =>
+      mapNotesToFretboard(combinedNotes, {
+        smart: smartGuitarMode,
+        melodyTrackIndexes,
+        bassTrackIndexes,
+      }),
+    [bassTrackIndexes, combinedNotes, melodyTrackIndexes, smartGuitarMode],
+  )
   const currentChord = currentMarkerText(song, currentTime)
 
   useEffect(() => {
     if (!song) return
     setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
-    lastAuditionKeyRef.current = ''
-    lastScrubTimeRef.current = 0
     stopPlayback()
   }, [songIndex, song])
 
   useEffect(() => {
+    let cancelled = false
+
+    void loadRecentMidiState()
+      .then((state) => {
+        if (cancelled || !state?.files.length) return
+        const parsed = state.files.map((file) => parseMidiFile(file.buffer.slice(0), file.name))
+        const nextIndex = Math.min(parsed.length - 1, Math.max(0, state.songIndex))
+        setRecentMidiFiles(state.files)
+        setSongs(parsed)
+        setSongIndex(nextIndex)
+        setSelectedTrackIndexes(chooseDefaultTracks(parsed[nextIndex]))
+        setCurrentTime(0)
+      })
+      .catch(() => {
+        if (!cancelled) setRecentMidiFiles(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     return () => {
       stopPlayback()
+      releaseAllScrubAudition()
       synthRef.current?.dispose()
     }
   }, [])
@@ -171,14 +233,79 @@ function App() {
     return synthRef.current
   }
 
+  function mappedNoteName(note: MidiNote) {
+    const placement = notePlacements.get(note.id)
+    return noteName(placement?.midi ?? note.midi)
+  }
+
+  function clearScrubReleaseTimer() {
+    if (scrubReleaseTimerRef.current !== null) {
+      window.clearTimeout(scrubReleaseTimerRef.current)
+      scrubReleaseTimerRef.current = null
+    }
+  }
+
+  function releaseScrubAudition(retainIds = new Set<string>()) {
+    const synth = synthRef.current
+    for (const [noteId, pitch] of scrubAuditionRef.current) {
+      if (retainIds.has(noteId)) continue
+      synth?.triggerRelease(pitch)
+      scrubAuditionRef.current.delete(noteId)
+    }
+    if (!scrubAuditionRef.current.size) clearScrubReleaseTimer()
+  }
+
+  function releaseAllScrubAudition() {
+    scrubRunRef.current += 1
+    clearScrubReleaseTimer()
+    releaseScrubAudition()
+  }
+
+  function scheduleScrubRelease() {
+    clearScrubReleaseTimer()
+    if (!scrubAuditionRef.current.size) return
+    scrubReleaseTimerRef.current = window.setTimeout(() => {
+      releaseAllScrubAudition()
+    }, 1200)
+  }
+
+  function auditionAt(time: number) {
+    const activeNotes = combinedNotes
+      .filter((note) => note.time <= time + 0.025 && note.time + note.duration >= time - 0.025)
+      .sort((a, b) => a.midi - b.midi || a.trackIndex - b.trackIndex)
+      .slice(0, MAX_SCRUB_AUDITION_NOTES)
+    const activeIds = new Set(activeNotes.map((note) => note.id))
+    const runId = scrubRunRef.current + 1
+    scrubRunRef.current = runId
+
+    if (!activeNotes.length) {
+      releaseScrubAudition()
+      return
+    }
+
+    void Tone.start().then(() => {
+      if (scrubRunRef.current !== runId) return
+      const synth = getSynth()
+      releaseScrubAudition(activeIds)
+      const start = Tone.now()
+      activeNotes.forEach((note, index) => {
+        if (scrubAuditionRef.current.has(note.id)) return
+        const pitch = mappedNoteName(note)
+        scrubAuditionRef.current.set(note.id, pitch)
+        synth.triggerAttack(pitch, start + index * 0.004, Math.max(0.18, note.velocity * 0.66))
+      })
+      scheduleScrubRelease()
+    })
+  }
+
   async function playFrom(time = currentTime) {
     if (!combinedNotes.length) return
+    releaseAllScrubAudition()
     const runId = playbackRunRef.current + 1
     playbackRunRef.current = runId
     const startTime = clampTime(time, song)
     playOffsetRef.current = startTime
     playStartedAtRef.current = performance.now()
-    lastScrubTimeRef.current = startTime
     setCurrentTime(startTime)
     setIsPlaying(true)
     setError('')
@@ -197,7 +324,6 @@ function App() {
       transport.seconds = 0
       playOffsetRef.current = audioStartTime
       playStartedAtRef.current = performance.now()
-      lastScrubTimeRef.current = audioStartTime
       setCurrentTime(audioStartTime)
 
       for (const note of combinedNotes) {
@@ -205,7 +331,7 @@ function App() {
         const start = Math.max(0, (note.time - audioStartTime) / speed)
         const duration = Math.max(0.03, note.duration / speed)
         transport.schedule((scheduledTime) => {
-          synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity * 0.78)
+          synth.triggerAttackRelease(mappedNoteName(note), duration, scheduledTime, note.velocity * 0.78)
         }, start)
       }
 
@@ -220,17 +346,18 @@ function App() {
 
   function pausePlayback() {
     playbackRunRef.current += 1
+    releaseAllScrubAudition()
     const transport = Tone.getTransport()
     const elapsed = (performance.now() - playStartedAtRef.current) / 1000
     const nextTime = clampTime(playOffsetRef.current + elapsed * speed, song)
     transport.pause()
-    lastScrubTimeRef.current = nextTime
     setCurrentTime(nextTime)
     setIsPlaying(false)
   }
 
   function stopPlayback() {
     playbackRunRef.current += 1
+    releaseAllScrubAudition()
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     const transport = Tone.getTransport()
     transport.stop()
@@ -240,61 +367,12 @@ function App() {
     setIsPlaying(false)
   }
 
-  function auditionDuration(note: MidiNote) {
-    return Math.min(3, Math.max(0.08, note.duration))
-  }
-
-  function auditionNotes(notes: MidiNote[], keySuffix: string) {
-    const now = performance.now()
-    if (now - lastAuditionAtRef.current < 25) return
-
-    const key = `${keySuffix}:${notes.map((note) => note.id).join('|')}`
-    if (!key || key === lastAuditionKeyRef.current) return
-
-    lastAuditionKeyRef.current = key
-    lastAuditionAtRef.current = now
-    void Tone.start().then(() => {
-      const synth = getSynth()
-      const start = Tone.now()
-      notes.forEach((note, index) => {
-        synth.triggerAttackRelease(
-          noteName(note.midi),
-          auditionDuration(note),
-          start + index * 0.004,
-          Math.max(0.18, note.velocity * 0.66),
-        )
-      })
-    })
-  }
-
-  function auditionAt(previousTime: number, nextTime: number) {
-    const low = Math.min(previousTime, nextTime) - 0.012
-    const high = Math.max(previousTime, nextTime) + 0.012
-    const crossedNotes = combinedNotes
-      .filter((note) => note.time >= low && note.time <= high)
-      .sort((a, b) => Math.abs(a.time - nextTime) - Math.abs(b.time - nextTime) || a.midi - b.midi)
-      .slice(0, MAX_SCRUB_AUDITION_NOTES)
-      .sort((a, b) => a.time - b.time || a.midi - b.midi)
-
-    if (crossedNotes.length) {
-      auditionNotes(crossedNotes, previousTime <= nextTime ? 'crossed-forward' : 'crossed-back')
-      return
-    }
-
-    const activeNotes = combinedNotes
-      .filter((note) => note.time <= nextTime + 0.035 && note.time + note.duration >= nextTime - 0.035)
-      .slice(0, MAX_SCRUB_AUDITION_NOTES)
-    if (activeNotes.length) auditionNotes(activeNotes, 'active')
-  }
-
   function scrubTo(time: number) {
     if (isPlaying) stopPlayback()
-    const previousTime = lastScrubTimeRef.current
     const nextTime = clampTime(time, song)
     playOffsetRef.current = nextTime
-    lastScrubTimeRef.current = nextTime
     setCurrentTime(nextTime)
-    auditionAt(previousTime, nextTime)
+    auditionAt(nextTime)
   }
 
   async function loadFiles(fileList: FileList | File[]) {
@@ -303,33 +381,42 @@ function App() {
 
     try {
       stopPlayback()
+      releaseAllScrubAudition()
       setError('')
-      const parsed = await Promise.all(
-        files.map(async (file) => parseMidiFile(await file.arrayBuffer(), file.name)),
+      const loadedFiles = await Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          lastModified: file.lastModified,
+          buffer: await file.arrayBuffer(),
+        })),
       )
+      const parsed = loadedFiles.map((file) => parseMidiFile(file.buffer.slice(0), file.name))
       setSongs(parsed)
       setSongIndex(0)
+      setRecentMidiFiles(loadedFiles)
       setSelectedTrackIndexes(chooseDefaultTracks(parsed[0]))
       setCurrentTime(0)
       setSettingsOpen(false)
-      lastAuditionKeyRef.current = ''
-      lastScrubTimeRef.current = 0
+      void saveRecentMidiState({ files: loadedFiles, songIndex: 0 })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load MIDI file.')
     }
   }
 
-  function updateTrackSlot(slot: 0 | 1, value: string) {
+  function updateTrackSlot(slot: TrackSlot, value: string) {
     stopPlayback()
+    releaseAllScrubAudition()
     setCurrentTime(0)
-    lastAuditionKeyRef.current = ''
-    lastScrubTimeRef.current = 0
     setSelectedTrackIndexes((current) => {
-      const next: [number, number | null] = [...current]
-      if (slot === 0) next[0] = value === 'none' ? current[0] : Number(value)
-      else next[1] = value === 'none' ? null : Number(value)
+      const next: TrackSelection = [...current]
+      next[slot] = value === 'none' ? null : Number(value)
       return next
     })
+  }
+
+  function updateFlowDensity(value: number) {
+    if (!Number.isFinite(value)) return
+    setFlowDensity(clampFlowDensity(value))
   }
 
   function exportMappedMidi() {
@@ -348,10 +435,10 @@ function App() {
 
   function chooseSong(index: number) {
     stopPlayback()
+    releaseAllScrubAudition()
     setSongIndex(index)
     setCurrentTime(0)
-    lastAuditionKeyRef.current = ''
-    lastScrubTimeRef.current = 0
+    if (recentMidiFiles?.length) void saveRecentMidiState({ files: recentMidiFiles, songIndex: index })
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -444,19 +531,19 @@ function App() {
             )}
 
             <div className="track-grid">
-              {[0, 1].map((slot) => {
-                const selectedIndex = selectedTrackIndexes[slot as 0 | 1]
+              {([0, 1, 2] as TrackSlot[]).map((slot) => {
+                const selectedIndex = selectedTrackIndexes[slot]
                 return (
                   <label className="field" key={slot}>
                     <span>
                       <i className="track-dot" style={{ background: TRACK_COLORS[slot] }} />
-                      {slot === 0 ? 'Primary Track' : 'Secondary Track'}
+                      {TRACK_SLOT_LABELS[slot]}
                     </span>
                     <select
                       value={selectedIndex ?? 'none'}
-                      onChange={(event) => updateTrackSlot(slot as 0 | 1, event.target.value)}
+                      onChange={(event) => updateTrackSlot(slot, event.target.value)}
                     >
-                      {slot === 1 && <option value="none">None</option>}
+                      <option value="none">None</option>
                       {tracks.map((track) => (
                         <option key={track.index} value={track.index}>
                           {trackLabel(track)}
@@ -467,6 +554,19 @@ function App() {
                 )
               })}
             </div>
+
+            <label className="toggle-field">
+              <span>Smart Guitar Mode</span>
+              <input
+                type="checkbox"
+                checked={smartGuitarMode}
+                onChange={(event) => {
+                  stopPlayback()
+                  releaseAllScrubAudition()
+                  setSmartGuitarMode(event.target.checked)
+                }}
+              />
+            </label>
 
             <label className="range-field">
               <span>Playback Speed</span>
@@ -484,6 +584,36 @@ function App() {
               />
               <b>{speed.toFixed(2)}x</b>
             </label>
+
+            <div className="field density-field">
+              <span>MIDI Density</span>
+              <div className="number-stepper">
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Decrease MIDI density"
+                  onClick={() => updateFlowDensity(flowDensity - FLOW_DENSITY_STEP)}
+                >
+                  <Minus size={17} />
+                </button>
+                <input
+                  type="number"
+                  min={MIN_FLOW_DENSITY}
+                  max={MAX_FLOW_DENSITY}
+                  step={FLOW_DENSITY_STEP}
+                  value={flowDensity}
+                  onChange={(event) => updateFlowDensity(Number(event.target.value))}
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Increase MIDI density"
+                  onClick={() => updateFlowDensity(flowDensity + FLOW_DENSITY_STEP)}
+                >
+                  <Plus size={17} />
+                </button>
+              </div>
+            </div>
 
             <label className="field">
               <span>
@@ -526,6 +656,7 @@ function App() {
           isPlaying={isPlaying}
           onScrub={scrubTo}
           trackColors={trackColors}
+          pixelsPerSecond={flowDensity}
         />
         <section className="neck-panel" data-neck-theme={fretboardTheme} aria-label="Live guitar neck">
           <Fretboard

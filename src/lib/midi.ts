@@ -68,6 +68,7 @@ export type MidiPlacement = {
   noteId: string
   stringIndex: number
   fret: number
+  midi?: number
 }
 
 type RawNote = Omit<MidiNote, 'time' | 'duration'>
@@ -506,9 +507,10 @@ export function exportGuitarMappedMidi(
     const placement = placements.get(note.id)
     if (!placement) continue
     const channel = 10 + placement.stringIndex
+    const midi = placement.midi ?? note.midi
     const velocity = Math.min(127, Math.max(1, Math.round(note.velocity * 127)))
-    guitarEvents.push({ tick: note.tick, order: 3, bytes: [0x90 | channel, note.midi, velocity] })
-    guitarEvents.push({ tick: note.endTick, order: 2, bytes: [0x80 | channel, note.midi, 0] })
+    guitarEvents.push({ tick: note.tick, order: 3, bytes: [0x90 | channel, midi, velocity] })
+    guitarEvents.push({ tick: note.endTick, order: 2, bytes: [0x80 | channel, midi, 0] })
   }
 
   const header = [

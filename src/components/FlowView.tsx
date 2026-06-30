@@ -13,12 +13,13 @@ type FlowViewProps = {
   isPlaying: boolean
   onScrub: (time: number) => void
   trackColors?: Record<number, string>
+  pixelsPerSecond?: number
 }
 
-const PIXELS_PER_SECOND = 168
+const DEFAULT_PIXELS_PER_SECOND = 168
 
-function timelineTop(midi: ParsedMidi, time: number) {
-  return Math.max(0, midi.duration - time) * PIXELS_PER_SECOND
+function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
+  return Math.max(0, midi.duration - time) * pixelsPerSecond
 }
 
 function currentMarker(markers: MidiMarker[], currentTime: number) {
@@ -40,22 +41,23 @@ export function FlowView({
   isPlaying,
   onScrub,
   trackColors = {},
+  pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
 }: FlowViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
   const userScrollRef = useRef(false)
   const userScrollTimerRef = useRef<number | null>(null)
   const marker = currentMarker(markers, currentTime)
-  const contentHeight = Math.max(520, midi.duration * PIXELS_PER_SECOND)
+  const contentHeight = Math.max(520, midi.duration * pixelsPerSecond)
 
   useEffect(() => {
     const container = scrollRef.current
     if (!container) return
-    const targetTop = timelineTop(midi, currentTime)
+    const targetTop = timelineTop(midi, currentTime, pixelsPerSecond)
     if (Math.abs(container.scrollTop - targetTop) < 0.5) return
     programmaticScrollUntilRef.current = performance.now() + 220
     container.scrollTop = Math.max(0, targetTop)
-  }, [currentTime, midi])
+  }, [currentTime, midi, pixelsPerSecond])
 
   function beginUserScroll() {
     if (isPlaying) return
@@ -75,7 +77,7 @@ export function FlowView({
     if (!container || isPlaying || !userScrollRef.current || performance.now() < programmaticScrollUntilRef.current) {
       return
     }
-    const nextTime = Math.min(midi.duration, Math.max(0, midi.duration - container.scrollTop / PIXELS_PER_SECOND))
+    const nextTime = Math.min(midi.duration, Math.max(0, midi.duration - container.scrollTop / pixelsPerSecond))
     if (Math.abs(nextTime - currentTime) < 0.01) return
     onScrub(nextTime)
     settleUserScroll()
@@ -115,7 +117,7 @@ export function FlowView({
                 <div
                   key={`${event.tick}-${event.text}`}
                   className="falling-chord"
-                  style={{ top: timelineTop(midi, event.time) }}
+                  style={{ top: timelineTop(midi, event.time, pixelsPerSecond) }}
                 >
                   {event.text}
                 </div>
@@ -126,10 +128,11 @@ export function FlowView({
               const point = fretboardPoint(placement)
               const string = GUITAR_STRINGS[placement.stringIndex]
               const x = (point.x / 1080) * 100
-              const y = timelineTop(midi, note.time)
-              const height = Math.max(22, note.duration * PIXELS_PER_SECOND)
+              const y = timelineTop(midi, note.time, pixelsPerSecond)
+              const height = Math.max(16, note.duration * pixelsPerSecond)
               const active = note.time <= currentTime && note.time + note.duration >= currentTime
               const trackColor = trackColors[note.trackIndex] ?? string.color
+              const displayMidi = placement.midi ?? note.midi
 
               return (
                 <div
@@ -142,7 +145,7 @@ export function FlowView({
                     borderColor: string.color,
                     background: `linear-gradient(180deg, ${trackColor}, rgba(255,255,255,.12))`,
                   }}
-                  title={`${note.trackName}: ${noteName(note.midi)} on ${string.name} fret ${placement.fret}`}
+                  title={`${note.trackName}: ${noteName(displayMidi)} on ${string.name} fret ${placement.fret}`}
                 >
                   <span>{placement.fret}</span>
                 </div>
