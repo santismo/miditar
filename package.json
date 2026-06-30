@@ -2,8 +2,9 @@
   "name": "miditar",
   "private": true,
   "version": "0.0.0",
-  "description": "A mobile-friendly MIDI fretboard trainer with BIAB chord markers and guitar-channel MIDI export.",
+  "description": "A mobile-friendly MIDI fretboard trainer with chord markers and guitar-channel MIDI export.",
   "homepage": "https://santismo.github.io/miditar/",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
