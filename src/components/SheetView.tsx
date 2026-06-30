@@ -52,7 +52,9 @@ export function SheetView({
   trackColors = {},
 }: SheetViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const programmaticScrollRef = useRef(false)
+  const programmaticScrollUntilRef = useRef(0)
+  const userScrollRef = useRef(false)
+  const userScrollTimerRef = useRef<number | null>(null)
   const currentTick = secondsToTicks(midi, currentTime)
   const measureTicks = getMeasureTicks(midi)
   const measureCount = Math.max(1, Math.ceil(midi.durationTicks / measureTicks))
@@ -78,19 +80,35 @@ export function SheetView({
     const container = containerRef.current
     if (!container) return
     const absoluteX = (currentTick / measureTicks) * MEASURE_WIDTH
-    programmaticScrollRef.current = true
+    if (Math.abs(container.scrollLeft - absoluteX) < 0.5) return
+    programmaticScrollUntilRef.current = performance.now() + 220
     container.scrollLeft = Math.max(0, absoluteX)
-    window.setTimeout(() => {
-      programmaticScrollRef.current = false
-    }, 80)
   }, [currentTick, measureTicks])
+
+  function beginUserScroll() {
+    if (isPlaying) return
+    userScrollRef.current = true
+    if (userScrollTimerRef.current !== null) window.clearTimeout(userScrollTimerRef.current)
+  }
+
+  function settleUserScroll() {
+    if (userScrollTimerRef.current !== null) window.clearTimeout(userScrollTimerRef.current)
+    userScrollTimerRef.current = window.setTimeout(() => {
+      userScrollRef.current = false
+    }, 900)
+  }
 
   function handleScroll() {
     const container = containerRef.current
-    if (!container || programmaticScrollRef.current) return
+    if (!container || isPlaying || !userScrollRef.current || performance.now() < programmaticScrollUntilRef.current) {
+      return
+    }
     const absoluteX = container.scrollLeft
     const tick = clamp((absoluteX / MEASURE_WIDTH) * measureTicks, 0, midi.durationTicks)
-    onScrub(midiTicksToSeconds(midi, tick))
+    const nextTime = midiTicksToSeconds(midi, tick)
+    if (Math.abs(nextTime - currentTime) < 0.01) return
+    onScrub(nextTime)
+    settleUserScroll()
   }
 
   return (
@@ -100,7 +118,18 @@ export function SheetView({
         <strong>{marker?.text || midi.title}</strong>
       </div>
       <div className="sheet-frame">
-        <div className="sheet-scroll" ref={containerRef} onScroll={handleScroll}>
+        <div
+          className="sheet-scroll"
+          ref={containerRef}
+          onScroll={handleScroll}
+          onWheel={beginUserScroll}
+          onPointerDown={beginUserScroll}
+          onPointerUp={settleUserScroll}
+          onPointerCancel={settleUserScroll}
+          onTouchStart={beginUserScroll}
+          onTouchEnd={settleUserScroll}
+          onTouchCancel={settleUserScroll}
+        >
           <div className="sheet-system">
             <div className="sheet-pad" aria-hidden="true" />
             {measures.map((measure) => {

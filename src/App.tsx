@@ -12,12 +12,14 @@ import {
   exportGuitarMappedMidi,
   noteName,
   parseMidiFile,
+  type MidiNote,
   type MidiTrack,
   type ParsedMidi,
 } from './lib/midi'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 const DEMO_SONG = createDemoMidi()
+const MAX_SCRUB_AUDITION_NOTES = 12
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
@@ -77,9 +79,12 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
   const playOffsetRef = useRef(0)
+  const playStartedAtRef = useRef(0)
+  const playbackRunRef = useRef(0)
   const rafRef = useRef<number | null>(null)
   const lastAuditionKeyRef = useRef('')
   const lastAuditionAtRef = useRef(0)
+  const lastScrubTimeRef = useRef(0)
 
   const song = songs[songIndex] ?? songs[0]
   const tracks = playableTracks(song)
@@ -123,6 +128,7 @@ function App() {
     setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
     lastAuditionKeyRef.current = ''
+    lastScrubTimeRef.current = 0
     stopPlayback()
   }, [songIndex, song])
 
@@ -137,8 +143,8 @@ function App() {
     if (!isPlaying) return
 
     const tick = () => {
-      const transport = Tone.getTransport()
-      const nextTime = Math.min(song.duration, playOffsetRef.current + transport.seconds * speed)
+      const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+      const nextTime = Math.min(song.duration, playOffsetRef.current + elapsed * speed)
       setCurrentTime(nextTime)
       if (nextTime >= song.duration) {
         stopPlayback()
@@ -165,56 +171,84 @@ function App() {
     return synthRef.current
   }
 
-  function playFrom(time = currentTime) {
+  async function playFrom(time = currentTime) {
     if (!combinedNotes.length) return
-    void Tone.start()
-    const synth = getSynth()
-    const transport = Tone.getTransport()
+    const runId = playbackRunRef.current + 1
+    playbackRunRef.current = runId
     const startTime = clampTime(time, song)
-    transport.stop()
-    transport.cancel(0)
-    transport.seconds = 0
     playOffsetRef.current = startTime
+    playStartedAtRef.current = performance.now()
+    lastScrubTimeRef.current = startTime
     setCurrentTime(startTime)
-
-    for (const note of combinedNotes) {
-      if (note.time + note.duration < startTime) continue
-      const start = Math.max(0, (note.time - startTime) / speed)
-      const duration = Math.max(0.03, note.duration / speed)
-      transport.schedule((scheduledTime) => {
-        synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity * 0.78)
-      }, start)
-    }
-
-    transport.start('+0.03')
     setIsPlaying(true)
+    setError('')
+
+    try {
+      await Tone.start()
+      if (playbackRunRef.current !== runId) return
+      const synth = getSynth()
+      const transport = Tone.getTransport()
+      const audioStartTime = clampTime(
+        startTime + ((performance.now() - playStartedAtRef.current) / 1000) * speed,
+        song,
+      )
+      transport.stop()
+      transport.cancel(0)
+      transport.seconds = 0
+      playOffsetRef.current = audioStartTime
+      playStartedAtRef.current = performance.now()
+      lastScrubTimeRef.current = audioStartTime
+      setCurrentTime(audioStartTime)
+
+      for (const note of combinedNotes) {
+        if (note.time + note.duration < audioStartTime) continue
+        const start = Math.max(0, (note.time - audioStartTime) / speed)
+        const duration = Math.max(0.03, note.duration / speed)
+        transport.schedule((scheduledTime) => {
+          synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity * 0.78)
+        }, start)
+      }
+
+      transport.start('+0.03')
+    } catch (err) {
+      if (playbackRunRef.current === runId) {
+        stopPlayback()
+        setError(err instanceof Error ? err.message : 'Could not start playback.')
+      }
+    }
   }
 
   function pausePlayback() {
+    playbackRunRef.current += 1
     const transport = Tone.getTransport()
-    const nextTime = clampTime(playOffsetRef.current + transport.seconds * speed, song)
+    const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+    const nextTime = clampTime(playOffsetRef.current + elapsed * speed, song)
     transport.pause()
+    lastScrubTimeRef.current = nextTime
     setCurrentTime(nextTime)
     setIsPlaying(false)
   }
 
   function stopPlayback() {
+    playbackRunRef.current += 1
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     const transport = Tone.getTransport()
     transport.stop()
     transport.cancel(0)
     transport.seconds = 0
+    playStartedAtRef.current = 0
     setIsPlaying(false)
   }
 
-  function auditionAt(time: number) {
-    const now = performance.now()
-    if (now - lastAuditionAtRef.current < 45) return
+  function auditionDuration(note: MidiNote) {
+    return Math.min(3, Math.max(0.08, note.duration))
+  }
 
-    const activeNotes = combinedNotes
-      .filter((note) => note.time <= time + 0.035 && note.time + note.duration >= time - 0.035)
-      .slice(0, 8)
-    const key = activeNotes.map((note) => note.id).join('|')
+  function auditionNotes(notes: MidiNote[], keySuffix: string) {
+    const now = performance.now()
+    if (now - lastAuditionAtRef.current < 25) return
+
+    const key = `${keySuffix}:${notes.map((note) => note.id).join('|')}`
     if (!key || key === lastAuditionKeyRef.current) return
 
     lastAuditionKeyRef.current = key
@@ -222,10 +256,10 @@ function App() {
     void Tone.start().then(() => {
       const synth = getSynth()
       const start = Tone.now()
-      activeNotes.forEach((note, index) => {
+      notes.forEach((note, index) => {
         synth.triggerAttackRelease(
           noteName(note.midi),
-          0.12,
+          auditionDuration(note),
           start + index * 0.004,
           Math.max(0.18, note.velocity * 0.66),
         )
@@ -233,12 +267,34 @@ function App() {
     })
   }
 
+  function auditionAt(previousTime: number, nextTime: number) {
+    const low = Math.min(previousTime, nextTime) - 0.012
+    const high = Math.max(previousTime, nextTime) + 0.012
+    const crossedNotes = combinedNotes
+      .filter((note) => note.time >= low && note.time <= high)
+      .sort((a, b) => Math.abs(a.time - nextTime) - Math.abs(b.time - nextTime) || a.midi - b.midi)
+      .slice(0, MAX_SCRUB_AUDITION_NOTES)
+      .sort((a, b) => a.time - b.time || a.midi - b.midi)
+
+    if (crossedNotes.length) {
+      auditionNotes(crossedNotes, previousTime <= nextTime ? 'crossed-forward' : 'crossed-back')
+      return
+    }
+
+    const activeNotes = combinedNotes
+      .filter((note) => note.time <= nextTime + 0.035 && note.time + note.duration >= nextTime - 0.035)
+      .slice(0, MAX_SCRUB_AUDITION_NOTES)
+    if (activeNotes.length) auditionNotes(activeNotes, 'active')
+  }
+
   function scrubTo(time: number) {
     if (isPlaying) stopPlayback()
+    const previousTime = lastScrubTimeRef.current
     const nextTime = clampTime(time, song)
     playOffsetRef.current = nextTime
+    lastScrubTimeRef.current = nextTime
     setCurrentTime(nextTime)
-    auditionAt(nextTime)
+    auditionAt(previousTime, nextTime)
   }
 
   async function loadFiles(fileList: FileList | File[]) {
@@ -257,6 +313,7 @@ function App() {
       setCurrentTime(0)
       setSettingsOpen(false)
       lastAuditionKeyRef.current = ''
+      lastScrubTimeRef.current = 0
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load MIDI file.')
     }
@@ -266,6 +323,7 @@ function App() {
     stopPlayback()
     setCurrentTime(0)
     lastAuditionKeyRef.current = ''
+    lastScrubTimeRef.current = 0
     setSelectedTrackIndexes((current) => {
       const next: [number, number | null] = [...current]
       if (slot === 0) next[0] = value === 'none' ? current[0] : Number(value)
@@ -293,6 +351,7 @@ function App() {
     setSongIndex(index)
     setCurrentTime(0)
     lastAuditionKeyRef.current = ''
+    lastScrubTimeRef.current = 0
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -327,7 +386,7 @@ function App() {
             type="button"
             className="play-button"
             aria-label={isPlaying ? 'Pause' : 'Play'}
-            onClick={() => (isPlaying ? pausePlayback() : playFrom())}
+            onClick={() => (isPlaying ? pausePlayback() : void playFrom())}
           >
             {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
           </button>

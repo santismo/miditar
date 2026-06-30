@@ -42,7 +42,9 @@ export function FlowView({
   trackColors = {},
 }: FlowViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const programmaticScrollRef = useRef(false)
+  const programmaticScrollUntilRef = useRef(0)
+  const userScrollRef = useRef(false)
+  const userScrollTimerRef = useRef<number | null>(null)
   const marker = currentMarker(markers, currentTime)
   const contentHeight = Math.max(520, midi.duration * PIXELS_PER_SECOND)
 
@@ -50,17 +52,33 @@ export function FlowView({
     const container = scrollRef.current
     if (!container) return
     const targetTop = timelineTop(midi, currentTime)
-    programmaticScrollRef.current = true
+    if (Math.abs(container.scrollTop - targetTop) < 0.5) return
+    programmaticScrollUntilRef.current = performance.now() + 220
     container.scrollTop = Math.max(0, targetTop)
-    window.setTimeout(() => {
-      programmaticScrollRef.current = false
-    }, 80)
   }, [currentTime, midi])
+
+  function beginUserScroll() {
+    if (isPlaying) return
+    userScrollRef.current = true
+    if (userScrollTimerRef.current !== null) window.clearTimeout(userScrollTimerRef.current)
+  }
+
+  function settleUserScroll() {
+    if (userScrollTimerRef.current !== null) window.clearTimeout(userScrollTimerRef.current)
+    userScrollTimerRef.current = window.setTimeout(() => {
+      userScrollRef.current = false
+    }, 900)
+  }
 
   function handleScroll() {
     const container = scrollRef.current
-    if (!container || programmaticScrollRef.current) return
-    onScrub(Math.min(midi.duration, Math.max(0, midi.duration - container.scrollTop / PIXELS_PER_SECOND)))
+    if (!container || isPlaying || !userScrollRef.current || performance.now() < programmaticScrollUntilRef.current) {
+      return
+    }
+    const nextTime = Math.min(midi.duration, Math.max(0, midi.duration - container.scrollTop / PIXELS_PER_SECOND))
+    if (Math.abs(nextTime - currentTime) < 0.01) return
+    onScrub(nextTime)
+    settleUserScroll()
   }
 
   return (
@@ -70,7 +88,18 @@ export function FlowView({
         <strong>{marker?.text || '-'}</strong>
       </div>
       <div className="flow-frame">
-        <div className="flow-scroll" ref={scrollRef} onScroll={handleScroll}>
+        <div
+          className="flow-scroll"
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={beginUserScroll}
+          onPointerDown={beginUserScroll}
+          onPointerUp={settleUserScroll}
+          onPointerCancel={settleUserScroll}
+          onTouchStart={beginUserScroll}
+          onTouchEnd={settleUserScroll}
+          onTouchCancel={settleUserScroll}
+        >
           <div className="flow-spacer" />
           <div className="flow-content" style={{ height: contentHeight }}>
             <div className="string-guides" aria-hidden="true">
