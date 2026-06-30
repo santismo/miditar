@@ -2,7 +2,6 @@ import type { MidiMarker, MidiNote, MidiPlacement } from '../lib/midi'
 import { noteName } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import { fretboardPoint } from '../lib/fretboardLayout'
-import { Fretboard } from './Fretboard'
 
 type FlowViewProps = {
   notes: MidiNote[]
@@ -10,6 +9,7 @@ type FlowViewProps = {
   placements: Map<string, MidiPlacement>
   currentTime: number
   duration: number
+  trackColors?: Record<number, string>
 }
 
 const LEAD_SECONDS = 6
@@ -31,7 +31,14 @@ function yForTime(time: number, currentTime: number) {
   return TARGET_Y - (until / LEAD_SECONDS) * (TARGET_Y - TOP_Y)
 }
 
-export function FlowView({ notes, markers, placements, currentTime, duration }: FlowViewProps) {
+export function FlowView({
+  notes,
+  markers,
+  placements,
+  currentTime,
+  duration,
+  trackColors = {},
+}: FlowViewProps) {
   const visibleNotes = notes.filter((note) => {
     const y = yForTime(note.time, currentTime)
     return y > -8 && y < 92 && note.time + note.duration > currentTime - 0.5
@@ -82,6 +89,7 @@ export function FlowView({ notes, markers, placements, currentTime, duration }: 
           const y = yForTime(note.time, currentTime)
           const height = Math.max(18, (note.duration / LEAD_SECONDS) * 280)
           const active = note.time <= currentTime && note.time + note.duration >= currentTime
+          const trackColor = trackColors[note.trackIndex] ?? string.color
 
           return (
             <div
@@ -92,17 +100,14 @@ export function FlowView({ notes, markers, placements, currentTime, duration }: 
                 top: `${y}%`,
                 height,
                 borderColor: string.color,
-                background: `linear-gradient(180deg, ${string.color}, rgba(255,255,255,.18))`,
+                background: `linear-gradient(180deg, ${trackColor}, rgba(255,255,255,.12))`,
               }}
-              title={`${noteName(note.midi)} on ${string.name} fret ${placement.fret}`}
+              title={`${note.trackName}: ${noteName(note.midi)} on ${string.name} fret ${placement.fret}`}
             >
               <span>{placement.fret}</span>
             </div>
           )
         })}
-        <div className="fretboard-dock">
-          <Fretboard notes={notes} placements={placements} currentTime={currentTime} />
-        </div>
       </div>
     </section>
   )

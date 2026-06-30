@@ -15,10 +15,11 @@ type FretboardProps = {
   notes: MidiNote[]
   placements: Map<string, MidiPlacement>
   currentTime: number
+  trackColors?: Record<number, string>
   maxFret?: number
 }
 
-export function Fretboard({ notes, placements, currentTime, maxFret = 22 }: FretboardProps) {
+export function Fretboard({ notes, placements, currentTime, trackColors = {}, maxFret = 22 }: FretboardProps) {
   const activeNotes = notes.filter(
     (note) => note.time <= currentTime + 0.03 && note.time + note.duration >= currentTime - 0.03,
   )
@@ -91,10 +92,11 @@ export function Fretboard({ notes, placements, currentTime, maxFret = 22 }: Fret
         if (!placement) return null
         const point = fretboardPoint(placement, maxFret)
         const string = GUITAR_STRINGS[placement.stringIndex]
+        const trackColor = trackColors[note.trackIndex] ?? string.color
         return (
           <g key={note.id} className="active-note">
-            <circle cx={point.x} cy={point.y} r="18" fill={string.color} />
-            <circle cx={point.x} cy={point.y} r="24" fill={string.color} opacity="0.22" />
+            <circle cx={point.x} cy={point.y} r="18" fill={trackColor} stroke={string.color} strokeWidth="4" />
+            <circle cx={point.x} cy={point.y} r="24" fill={trackColor} opacity="0.22" />
             <text x={point.x} y={point.y + 5} textAnchor="middle">
               {placement.fret}
             </text>

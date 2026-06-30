@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
+import { Fretboard } from './components/Fretboard'
 import { SheetView } from './components/SheetView'
 import { GUITAR_STRINGS, mapNotesToFretboard } from './lib/fretboard'
 import {
@@ -26,14 +27,23 @@ import {
   type ParsedMidi,
 } from './lib/midi'
 
-type ViewMode = 'flow' | 'sheet'
+const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 
-function chooseDefaultTrack(song: ParsedMidi) {
-  const tracks = song.tracks.filter((track) => track.notes.length)
+function playableTracks(song: ParsedMidi) {
+  return song.tracks.filter((track) => track.notes.length)
+}
+
+function chooseDefaultTracks(song: ParsedMidi): [number, number | null] {
+  const tracks = playableTracks(song)
   const guitar = tracks.find((track) => /guitar/i.test(track.name))
   const melody = tracks.find((track) => /melody/i.test(track.name))
-  const fallback = [...tracks].sort((a, b) => b.notes.length - a.notes.length)[0]
-  return guitar?.index ?? melody?.index ?? fallback?.index ?? song.tracks[0]?.index ?? 0
+  const fallback = [...tracks].sort((a, b) => b.notes.length - a.notes.length)
+  const first = guitar?.index ?? melody?.index ?? fallback[0]?.index ?? song.tracks[0]?.index ?? 0
+  const second =
+    melody && melody.index !== first
+      ? melody.index
+      : fallback.find((track) => track.index !== first)?.index ?? null
+  return [first, second]
 }
 
 function formatTime(seconds: number) {
@@ -54,8 +64,9 @@ function trackLabel(track: MidiTrack) {
 function App() {
   const [songs, setSongs] = useState<ParsedMidi[]>([createDemoMidi()])
   const [songIndex, setSongIndex] = useState(0)
-  const [selectedTrackIndex, setSelectedTrackIndex] = useState(1)
-  const [viewMode, setViewMode] = useState<ViewMode>('flow')
+  const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<[number, number | null]>(() =>
+    chooseDefaultTracks(createDemoMidi()),
+  )
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -66,22 +77,44 @@ function App() {
   const rafRef = useRef<number | null>(null)
 
   const song = songs[songIndex] ?? songs[0]
-  const selectedTrack =
-    song.tracks.find((track) => track.index === selectedTrackIndex) ??
-    song.tracks.find((track) => track.notes.length) ??
-    song.tracks[0]
-  const notePlacements = useMemo(
-    () => mapNotesToFretboard(selectedTrack?.notes ?? []),
-    [selectedTrack],
+  const tracks = playableTracks(song)
+  const selectedTracks = selectedTrackIndexes
+    .map((trackIndex) =>
+      trackIndex === null ? null : song.tracks.find((track) => track.index === trackIndex),
+    )
+    .filter((track): track is MidiTrack => Boolean(track))
+  const combinedNotes = useMemo(
+    () =>
+      selectedTracks
+        .flatMap((track) => track.notes)
+        .sort((a, b) => a.tick - b.tick || a.trackIndex - b.trackIndex || a.midi - b.midi),
+    [selectedTracks],
   )
-  const mappedCount = selectedTrack?.notes.filter((note) => notePlacements.has(note.id)).length ?? 0
-  const currentNote = selectedTrack?.notes.find(
+  const virtualTrack: MidiTrack | null = selectedTracks.length
+    ? {
+        index: -1,
+        name: selectedTracks.map((track) => track.name || `Track ${track.index + 1}`).join(' + '),
+        notes: combinedNotes,
+        channels: [...new Set(selectedTracks.flatMap((track) => track.channels))],
+        programs: {},
+      }
+    : null
+  const trackColors = useMemo(() => {
+    const colors: Record<number, string> = {}
+    selectedTracks.forEach((track, index) => {
+      colors[track.index] = TRACK_COLORS[index % TRACK_COLORS.length]
+    })
+    return colors
+  }, [selectedTracks])
+  const notePlacements = useMemo(() => mapNotesToFretboard(combinedNotes), [combinedNotes])
+  const mappedCount = combinedNotes.filter((note) => notePlacements.has(note.id)).length
+  const currentNotes = combinedNotes.filter(
     (note) => note.time <= currentTime && note.time + note.duration >= currentTime,
   )
 
   useEffect(() => {
     if (!song) return
-    setSelectedTrackIndex(chooseDefaultTrack(song))
+    setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
     stopPlayback()
   }, [songIndex, song])
@@ -120,13 +153,13 @@ function App() {
         oscillator: { type: 'triangle' },
         envelope: { attack: 0.01, decay: 0.08, sustain: 0.42, release: 0.18 },
       }).toDestination()
-      synthRef.current.volume.value = -8
+      synthRef.current.volume.value = -9
     }
     return synthRef.current
   }
 
   function playFrom(time = currentTime) {
-    if (!selectedTrack) return
+    if (!combinedNotes.length) return
     void Tone.start()
     const synth = getSynth()
     const transport = Tone.getTransport()
@@ -135,12 +168,12 @@ function App() {
     transport.seconds = 0
     playOffsetRef.current = time
 
-    for (const note of selectedTrack.notes) {
+    for (const note of combinedNotes) {
       if (note.time + note.duration < time) continue
       const start = Math.max(0, (note.time - time) / speed)
       const duration = Math.max(0.03, note.duration / speed)
       transport.schedule((scheduledTime) => {
-        synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity)
+        synth.triggerAttackRelease(noteName(note.midi), duration, scheduledTime, note.velocity * 0.78)
       }, start)
     }
 
@@ -177,21 +210,32 @@ function App() {
       )
       setSongs(parsed)
       setSongIndex(0)
-      setSelectedTrackIndex(chooseDefaultTrack(parsed[0]))
+      setSelectedTrackIndexes(chooseDefaultTracks(parsed[0]))
       setCurrentTime(0)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load MIDI file.')
     }
   }
 
+  function updateTrackSlot(slot: 0 | 1, value: string) {
+    stopPlayback()
+    setCurrentTime(0)
+    setSelectedTrackIndexes((current) => {
+      const next: [number, number | null] = [...current]
+      if (slot === 0) next[0] = value === 'none' ? current[0] : Number(value)
+      else next[1] = value === 'none' ? null : Number(value)
+      return next
+    })
+  }
+
   function exportMappedMidi() {
-    if (!selectedTrack) return
-    const bytes = exportGuitarMappedMidi(song, selectedTrack, notePlacements)
+    if (!virtualTrack) return
+    const bytes = exportGuitarMappedMidi(song, virtualTrack, notePlacements)
     const blob = new Blob([bytes], { type: 'audio/midi' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `${safeFileName(song.title)}_${safeFileName(selectedTrack.name || 'track')}_miditar.mid`
+    link.download = `${safeFileName(song.title)}_${safeFileName(virtualTrack.name || 'tracks')}_miditar.mid`
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -216,7 +260,7 @@ function App() {
           </div>
           <div>
             <h1>Miditar</h1>
-            <p>MIDI to fretboard trainer</p>
+            <p>Chord-aware MIDI fretboard trainer</p>
           </div>
         </div>
         <div className="header-actions">
@@ -257,28 +301,35 @@ function App() {
               </button>
             ))}
           </div>
-          <label className="field">
-            <span>Track</span>
-            <select
-              value={selectedTrack?.index ?? 0}
-              onChange={(event) => {
-                stopPlayback()
-                setSelectedTrackIndex(Number(event.target.value))
-                setCurrentTime(0)
-              }}
-            >
-              {song.tracks
-                .filter((track) => track.notes.length)
-                .map((track) => (
-                  <option key={track.index} value={track.index}>
-                    {trackLabel(track)}
-                  </option>
-                ))}
-            </select>
-          </label>
+
+          <div className="track-grid">
+            {[0, 1].map((slot) => {
+              const selectedIndex = selectedTrackIndexes[slot as 0 | 1]
+              return (
+                <label className="field" key={slot}>
+                  <span>
+                    <i style={{ background: TRACK_COLORS[slot] }} />
+                    Track {slot === 0 ? 'A' : 'B'}
+                  </span>
+                  <select
+                    value={selectedIndex ?? 'none'}
+                    onChange={(event) => updateTrackSlot(slot as 0 | 1, event.target.value)}
+                  >
+                    {slot === 1 && <option value="none">None</option>}
+                    {tracks.map((track) => (
+                      <option key={track.index} value={track.index}>
+                        {trackLabel(track)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )
+            })}
+          </div>
+
           <div className="mapping-status">
             <strong>{mappedCount}</strong>
-            <span>of {selectedTrack?.notes.length ?? 0} notes mapped</span>
+            <span>of {combinedNotes.length} notes mapped</span>
           </div>
           <div className="string-map">
             {GUITAR_STRINGS.map((string) => (
@@ -293,40 +344,29 @@ function App() {
         </aside>
 
         <section className="main-stage">
-          <div className="mode-tabs" role="tablist" aria-label="View mode">
-            <button
-              type="button"
-              className={viewMode === 'flow' ? 'is-active' : ''}
-              onClick={() => setViewMode('flow')}
-            >
-              <Guitar size={17} />
-              Fretboard
-            </button>
-            <button
-              type="button"
-              className={viewMode === 'sheet' ? 'is-active' : ''}
-              onClick={() => setViewMode('sheet')}
-            >
-              <ListMusic size={17} />
-              Sheet
-            </button>
-          </div>
-          {viewMode === 'flow' ? (
-            <FlowView
-              notes={selectedTrack?.notes ?? []}
-              markers={song.markers}
+          <SheetView
+            midi={song}
+            notes={combinedNotes}
+            markers={song.markers}
+            currentTime={currentTime}
+            trackColors={trackColors}
+          />
+          <FlowView
+            notes={combinedNotes}
+            markers={song.markers}
+            placements={notePlacements}
+            currentTime={currentTime}
+            duration={song.duration}
+            trackColors={trackColors}
+          />
+          <section className="neck-panel" aria-label="Live guitar neck">
+            <Fretboard
+              notes={combinedNotes}
               placements={notePlacements}
               currentTime={currentTime}
-              duration={song.duration}
+              trackColors={trackColors}
             />
-          ) : (
-            <SheetView
-              midi={song}
-              notes={selectedTrack?.notes ?? []}
-              markers={song.markers}
-              currentTime={currentTime}
-            />
-          )}
+          </section>
         </section>
       </main>
 
@@ -388,15 +428,16 @@ function App() {
             value={speed}
             onChange={(event) => {
               const nextSpeed = Number(event.target.value)
-              const wasPlaying = isPlaying
-              if (wasPlaying) pausePlayback()
+              if (isPlaying) pausePlayback()
               setSpeed(nextSpeed)
             }}
           />
           <span>{speed.toFixed(2)}x</span>
         </label>
         <div className="now-playing">
-          {currentNote ? noteName(currentNote.midi) : selectedTrack?.name || 'No track'}
+          {currentNotes.length
+            ? currentNotes.map((note) => noteName(note.midi)).join(' ')
+            : virtualTrack?.name || 'No track'}
         </div>
         <button type="button" className="button upload-compact" onClick={() => fileInputRef.current?.click()}>
           <Upload size={18} />

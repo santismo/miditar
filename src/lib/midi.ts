@@ -540,7 +540,9 @@ export function createDemoMidi(): ParsedMidi {
     type: 'marker',
   }))
   const pattern = [62, 65, 69, 72, 74, 72, 69, 65]
+  const counterPattern = [50, 55, 59, 62, 52, 57, 60, 64]
   const notes: MidiNote[] = []
+  const counterNotes: MidiNote[] = []
 
   for (let bar = 0; bar < 8; bar += 1) {
     for (let step = 0; step < 4; step += 1) {
@@ -557,6 +559,26 @@ export function createDemoMidi(): ParsedMidi {
         velocity: 0.78,
         tick,
         durationTicks: ppq * 0.82,
+        endTick,
+        time,
+        duration: ticksToSeconds(endTick, tempos, ppq) - time,
+      })
+    }
+
+    for (let step = 0; step < 2; step += 1) {
+      const tick = bar * ppq * 4 + step * ppq * 2
+      const midi = counterPattern[(bar + step) % counterPattern.length]
+      const time = ticksToSeconds(tick, tempos, ppq)
+      const endTick = tick + ppq * 1.55
+      counterNotes.push({
+        id: `demo-counter-${bar}-${step}`,
+        trackIndex: 2,
+        trackName: 'Demo Counterline',
+        channel: 2,
+        midi,
+        velocity: 0.64,
+        tick,
+        durationTicks: ppq * 1.55,
         endTick,
         time,
         duration: ticksToSeconds(endTick, tempos, ppq) - time,
@@ -580,6 +602,7 @@ export function createDemoMidi(): ParsedMidi {
     markers,
     tracks: [
       { index: 1, name: 'Demo Guitar', notes, channels: [1], programs: { 1: 26 } },
+      { index: 2, name: 'Demo Counterline', notes: counterNotes, channels: [2], programs: { 2: 24 } },
     ],
   }
 }

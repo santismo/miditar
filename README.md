@@ -1,13 +1,17 @@
 # Miditar
 
-Miditar is a browser-based MIDI fretboard trainer built for Band-in-a-Box exports. It reads MIDI chord marker meta-events, maps note tracks onto guitar strings and frets, and can export a new MIDI file using BIAB-style guitar string channels.
+Miditar is a browser-based MIDI fretboard trainer built for Band-in-a-Box exports. It reads MIDI chord marker meta-events, maps one or two note tracks onto guitar strings and frets, and can export a new MIDI file using BIAB-style guitar string channels.
+
+Live app: https://santismo.github.io/miditar/
 
 ## Features
 
 - Drag/drop or open one or more `.mid` / `.midi` files.
-- Playlist and MIDI track selector.
+- Dark mode by default.
+- Playlist and two MIDI track selectors for viewing two parts on one neck.
 - Falling-note fretboard view with chord markers in the flow lane.
-- Scrolling sheet-style view with chord markers above each measure.
+- Horizontal scrolling sheet-style view with chord markers above each measure.
+- Persistent three-view layout: sheet strip, falling notes, and live fretboard stay visible together.
 - Mobile-friendly layout with a persistent transport bar.
 - Playback speed control and timeline scrubber.
 - Guitar mapping for standard tuning: E4, B3, G3, D3, A2, E2.
