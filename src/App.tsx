@@ -1,6 +1,6 @@
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import { Download, FileMusic, FolderOpen, Guitar, Minus, Palette, Pause, Play, Plus, Settings, X } from 'lucide-react'
+import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
@@ -32,6 +32,9 @@ const DEFAULT_FLOW_DENSITY = 168
 const MIN_FLOW_DENSITY = 88
 const MAX_FLOW_DENSITY = 320
 const FLOW_DENSITY_STEP = 12
+const MIN_TEMPO_BPM = 40
+const MAX_TEMPO_BPM = 240
+const TEMPO_STEP = 1
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -86,6 +89,15 @@ function clampTime(time: number, song: ParsedMidi) {
   return Math.min(song.duration, Math.max(0, time))
 }
 
+function clampTempoBpm(value: number) {
+  return Math.min(MAX_TEMPO_BPM, Math.max(MIN_TEMPO_BPM, Math.round(value)))
+}
+
+function songTempoBpm(song: ParsedMidi) {
+  const firstTempo = song.tempos.find((tempo) => tempo.tick === 0) ?? song.tempos[0]
+  return clampTempoBpm(firstTempo?.bpm ?? 120)
+}
+
 function clampFlowDensity(value: number) {
   return Math.min(MAX_FLOW_DENSITY, Math.max(MIN_FLOW_DENSITY, Math.round(value)))
 }
@@ -97,6 +109,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
+  const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
   const [playbackInstrumentId, setPlaybackInstrumentId] =
@@ -118,6 +131,8 @@ function App() {
   const scrubReleaseTimerRef = useRef<number | null>(null)
 
   const song = songs[songIndex] ?? songs[0]
+  const sourceTempoBpm = songTempoBpm(song)
+  const playbackRate = speed * (tempoBpm / sourceTempoBpm)
   const tracks = playableTracks(song)
   const selectedTracks = useMemo(() => {
     const seen = new Set<number>()
@@ -182,6 +197,7 @@ function App() {
     if (!song) return
     setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
+    setTempoBpm(songTempoBpm(song))
     stopPlayback()
   }, [songIndex, song])
 
@@ -198,6 +214,7 @@ function App() {
         setSongIndex(nextIndex)
         setSelectedTrackIndexes(chooseDefaultTracks(parsed[nextIndex]))
         setCurrentTime(0)
+        setTempoBpm(songTempoBpm(parsed[nextIndex]))
       })
       .catch(() => {
         if (!cancelled) setRecentMidiFiles(null)
@@ -222,7 +239,7 @@ function App() {
 
     const tick = () => {
       const elapsed = (performance.now() - playStartedAtRef.current) / 1000
-      const nextTime = Math.min(song.duration, playOffsetRef.current + elapsed * speed)
+      const nextTime = Math.min(song.duration, playOffsetRef.current + elapsed * playbackRate)
       setCurrentTime(nextTime)
       if (nextTime >= song.duration) {
         stopPlayback()
@@ -236,7 +253,7 @@ function App() {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
-  }, [isPlaying, song.duration, speed])
+  }, [isPlaying, playbackRate, song.duration])
 
   function getSynth() {
     if (!synthRef.current) {
@@ -387,7 +404,7 @@ function App() {
       if (playbackRunRef.current !== runId) return
       const transport = Tone.getTransport()
       const audioStartTime = clampTime(
-        startTime + ((performance.now() - playStartedAtRef.current) / 1000) * speed,
+        startTime + ((performance.now() - playStartedAtRef.current) / 1000) * playbackRate,
         song,
       )
       transport.stop()
@@ -399,8 +416,8 @@ function App() {
 
       for (const note of combinedNotes) {
         if (note.time + note.duration < audioStartTime) continue
-        const start = Math.max(0, (note.time - audioStartTime) / speed)
-        const duration = Math.max(0.03, note.duration / speed)
+        const start = Math.max(0, (note.time - audioStartTime) / playbackRate)
+        const duration = Math.max(0.03, note.duration / playbackRate)
         transport.schedule((scheduledTime) => {
           if (engine.kind === 'sample') {
             void engine.engine.triggerAttackRelease(
@@ -432,7 +449,7 @@ function App() {
     sampleEngineRef.current?.releaseAll()
     const transport = Tone.getTransport()
     const elapsed = (performance.now() - playStartedAtRef.current) / 1000
-    const nextTime = clampTime(playOffsetRef.current + elapsed * speed, song)
+    const nextTime = clampTime(playOffsetRef.current + elapsed * playbackRate, song)
     transport.pause()
     setCurrentTime(nextTime)
     setIsPlaying(false)
@@ -480,6 +497,7 @@ function App() {
       setRecentMidiFiles(loadedFiles)
       setSelectedTrackIndexes(chooseDefaultTracks(parsed[0]))
       setCurrentTime(0)
+      setTempoBpm(songTempoBpm(parsed[0]))
       setSettingsOpen(false)
       void saveRecentMidiState({ files: loadedFiles, songIndex: 0 })
     } catch (err) {
@@ -501,6 +519,12 @@ function App() {
   function updateFlowDensity(value: number) {
     if (!Number.isFinite(value)) return
     setFlowDensity(clampFlowDensity(value))
+  }
+
+  function updateTempoBpm(value: number) {
+    if (!Number.isFinite(value)) return
+    if (isPlaying) pausePlayback()
+    setTempoBpm(clampTempoBpm(value))
   }
 
   function updatePlaybackInstrument(value: PlaybackInstrumentId) {
@@ -531,6 +555,7 @@ function App() {
     releaseAllScrubAudition()
     setSongIndex(index)
     setCurrentTime(0)
+    setTempoBpm(songTempoBpm(songs[index] ?? song))
     if (recentMidiFiles?.length) void saveRecentMidiState({ files: recentMidiFiles, songIndex: index })
   }
 
@@ -679,6 +704,19 @@ function App() {
             </label>
 
             <label className="range-field">
+              <span>Tempo</span>
+              <input
+                type="range"
+                min={MIN_TEMPO_BPM}
+                max={MAX_TEMPO_BPM}
+                step={TEMPO_STEP}
+                value={tempoBpm}
+                onChange={(event) => updateTempoBpm(Number(event.target.value))}
+              />
+              <b>{tempoBpm} bpm</b>
+            </label>
+
+            <label className="range-field">
               <span>Playback Speed</span>
               <input
                 type="range"
@@ -695,35 +733,18 @@ function App() {
               <b>{speed.toFixed(2)}x</b>
             </label>
 
-            <div className="field density-field">
+            <label className="range-field">
               <span>MIDI Density</span>
-              <div className="number-stepper">
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="Decrease MIDI density"
-                  onClick={() => updateFlowDensity(flowDensity - FLOW_DENSITY_STEP)}
-                >
-                  <Minus size={17} />
-                </button>
-                <input
-                  type="number"
-                  min={MIN_FLOW_DENSITY}
-                  max={MAX_FLOW_DENSITY}
-                  step={FLOW_DENSITY_STEP}
-                  value={flowDensity}
-                  onChange={(event) => updateFlowDensity(Number(event.target.value))}
-                />
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="Increase MIDI density"
-                  onClick={() => updateFlowDensity(flowDensity + FLOW_DENSITY_STEP)}
-                >
-                  <Plus size={17} />
-                </button>
-              </div>
-            </div>
+              <input
+                type="range"
+                min={MIN_FLOW_DENSITY}
+                max={MAX_FLOW_DENSITY}
+                step={FLOW_DENSITY_STEP}
+                value={flowDensity}
+                onChange={(event) => updateFlowDensity(Number(event.target.value))}
+              />
+              <b>{flowDensity}</b>
+            </label>
 
             <label className="field">
               <span>

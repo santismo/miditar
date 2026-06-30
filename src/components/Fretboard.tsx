@@ -38,7 +38,8 @@ export function Fretboard({
   return (
     <svg
       className="fretboard"
-      viewBox={`0 0 ${FRETBOARD_VIEW_WIDTH} ${FRETBOARD_VIEW_HEIGHT}`}
+      viewBox={`0 10 ${FRETBOARD_VIEW_WIDTH} ${FRETBOARD_VIEW_HEIGHT - 10}`}
+      preserveAspectRatio="none"
       role="img"
       aria-label="Guitar fretboard"
     >

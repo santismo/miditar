@@ -22,9 +22,11 @@ type Measure = {
 
 type VexflowModule = typeof import('vexflow')
 type VexStaveNote = InstanceType<VexflowModule['StaveNote']>
+type ClefName = 'treble' | 'bass'
+type VexDurationName = 'w' | 'h' | 'q' | '8' | '16'
 
-const MEASURE_WIDTH = 300
-const MEASURE_HEIGHT = 154
+const MEASURE_WIDTH = 360
+const MEASURE_HEIGHT = 188
 const SIXTEENTH_DIVISIONS = 4
 const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
 const FLAT_NAMES = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b']
@@ -71,12 +73,30 @@ function currentMarker(markers: MidiMarker[], currentTime: number) {
 }
 
 function durationToVex(ticks: number, ppq: number) {
-  const quarterNotes = Math.max(0.125, ticks / ppq)
-  if (quarterNotes >= 3.25) return { duration: 'w', ticks: ppq * 4 }
-  if (quarterNotes >= 1.5) return { duration: 'h', ticks: ppq * 2 }
-  if (quarterNotes >= 0.75) return { duration: 'q', ticks: ppq }
-  if (quarterNotes >= 0.375) return { duration: '8', ticks: ppq / 2 }
-  return { duration: '16', ticks: ppq / 4 }
+  const unitTicks = ppq / SIXTEENTH_DIVISIONS
+  const units = Math.max(1, Math.round(ticks / unitTicks))
+  const durations: { units: number; duration: VexDurationName; dots: number }[] = [
+    { units: 16, duration: 'w', dots: 0 },
+    { units: 12, duration: 'h', dots: 1 },
+    { units: 8, duration: 'h', dots: 0 },
+    { units: 6, duration: 'q', dots: 1 },
+    { units: 4, duration: 'q', dots: 0 },
+    { units: 3, duration: '8', dots: 1 },
+    { units: 2, duration: '8', dots: 0 },
+    { units: 1, duration: '16', dots: 0 },
+  ]
+  const match = durations.find((item) => units >= item.units) ?? durations[durations.length - 1]
+  return { duration: match.duration, dots: match.dots, ticks: match.units * unitTicks }
+}
+
+function vexDurationString(duration: ReturnType<typeof durationToVex>, rest = false) {
+  return `${duration.duration}${'d'.repeat(duration.dots)}${rest ? 'r' : ''}`
+}
+
+function attachDots(note: VexStaveNote, dots: number, Vex: VexflowModule) {
+  for (let index = 0; index < dots; index += 1) {
+    Vex.Dot.buildAndAttach([note], { all: true })
+  }
 }
 
 function midiToVexKey(midi: number, preferFlats: boolean) {
@@ -87,16 +107,32 @@ function midiToVexKey(midi: number, preferFlats: boolean) {
   return { key: `${name}/${octave}`, accidental }
 }
 
-function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, Vex: VexflowModule) {
+function restKey(clef: ClefName) {
+  return clef === 'bass' ? 'd/3' : 'b/4'
+}
+
+function clefForMeasure(measure: Measure): ClefName {
+  if (!measure.notes.length) return 'treble'
+  const averageMidi = measure.notes.reduce((total, note) => total + note.midi, 0) / measure.notes.length
+  return averageMidi < 57 ? 'bass' : 'treble'
+}
+
+function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, clef: ClefName, Vex: VexflowModule) {
   let remaining = ticks
-  while (remaining >= ppq / 8) {
+  while (remaining >= ppq / SIXTEENTH_DIVISIONS) {
     const duration = durationToVex(remaining, ppq)
-    tickables.push(new Vex.StaveNote({ keys: ['b/4'], duration: `${duration.duration}r` }))
+    const rest = new Vex.StaveNote({
+      clef,
+      keys: [restKey(clef)],
+      duration: vexDurationString(duration, true),
+    })
+    attachDots(rest, duration.dots, Vex)
+    tickables.push(rest)
     remaining -= duration.ticks
   }
 }
 
-function buildNotationNotes(measure: Measure, midi: ParsedMidi, Vex: VexflowModule) {
+function buildNotationNotes(measure: Measure, midi: ParsedMidi, clef: ClefName, Vex: VexflowModule) {
   const unitTicks = midi.ppq / SIXTEENTH_DIVISIONS
   const preferFlats = (midi.keySignatures[0]?.sf ?? 0) < 0
   const groups = new Map<number, MidiNote[]>()
@@ -115,32 +151,35 @@ function buildNotationNotes(measure: Measure, midi: ParsedMidi, Vex: VexflowModu
   for (let index = 0; index < starts.length; index += 1) {
     const start = starts[index]
     const group = groups.get(start)!
-    if (start > cursor) addRest(tickables, start - cursor, midi.ppq, Vex)
+    if (start > cursor) addRest(tickables, start - cursor, midi.ppq, clef, Vex)
 
     const nextStart = starts[index + 1] ?? measure.end - measure.start
     const groupEnd = Math.max(...group.map((note) => clamp(note.endTick, measure.start, measure.end) - measure.start))
     const duration = durationToVex(Math.max(unitTicks, Math.min(groupEnd, nextStart) - start), midi.ppq)
     const selectedNotes = [...group]
       .sort((a, b) => a.midi - b.midi || b.velocity - a.velocity)
+      .filter((note, noteIndex, sorted) => sorted.findIndex((item) => item.midi === note.midi) === noteIndex)
       .slice(0, 6)
     const pitches = selectedNotes.map((note) => midiToVexKey(note.midi, preferFlats))
     const staveNote = new Vex.StaveNote({
-      clef: 'treble',
+      clef,
       keys: pitches.map((pitch) => pitch.key),
-      duration: duration.duration,
+      duration: vexDurationString(duration),
+      autoStem: true,
     })
 
     pitches.forEach((pitch, pitchIndex) => {
       if (pitch.accidental) staveNote.addModifier(new Vex.Accidental(pitch.accidental), pitchIndex)
     })
+    attachDots(staveNote, duration.dots, Vex)
     tickables.push(staveNote)
     cursor = start + duration.ticks
   }
 
   if (cursor < measure.end - measure.start) {
-    addRest(tickables, measure.end - measure.start - cursor, midi.ppq, Vex)
+    addRest(tickables, measure.end - measure.start - cursor, midi.ppq, clef, Vex)
   }
-  return tickables.length ? tickables : [new Vex.StaveNote({ keys: ['b/4'], duration: 'wr' })]
+  return tickables.length ? tickables : [new Vex.StaveNote({ clef, keys: [restKey(clef)], duration: 'wr' })]
 }
 
 function MeasureNotation({
@@ -155,6 +194,7 @@ function MeasureNotation({
   const notationRef = useRef<HTMLDivElement | null>(null)
   const signature = activeTimeSignature(midi)
   const keyName = keySignatureName(midi)
+  const clef = clefForMeasure(measure)
 
   useEffect(() => {
     const node = notationRef.current
@@ -167,29 +207,36 @@ function MeasureNotation({
       try {
         const renderer = new Vex.Renderer(node, Vex.Renderer.Backends.SVG)
         renderer.resize(MEASURE_WIDTH, MEASURE_HEIGHT)
+        const svg = node.querySelector('svg')
+        svg?.setAttribute('viewBox', `0 0 ${MEASURE_WIDTH} ${MEASURE_HEIGHT}`)
+        svg?.setAttribute('preserveAspectRatio', 'xMidYMid meet')
         const context = renderer.getContext()
         context.setFillStyle('#d8e0d0')
         context.setStrokeStyle('#d8e0d0')
 
-        const stave = new Vex.Stave(10, 36, MEASURE_WIDTH - 20)
+        const stave = new Vex.Stave(12, 54, MEASURE_WIDTH - 24)
+        stave.addClef(clef)
         if (showSignature) {
-          stave.addClef('treble')
           if (keyName) stave.addKeySignature(keyName)
           stave.addTimeSignature(`${signature.numerator}/${signature.denominator}`)
         }
         stave.setContext(context).draw()
 
-        const tickables = buildNotationNotes(measure, midi, Vex)
+        const tickables = buildNotationNotes(measure, midi, clef, Vex)
         const voice = new Vex.Voice({
           numBeats: signature.numerator,
           beatValue: signature.denominator,
         }).setMode(Vex.Voice.Mode.SOFT)
         voice.addTickables(tickables)
-        new Vex.Formatter().joinVoices([voice]).format([voice], showSignature ? MEASURE_WIDTH - 120 : MEASURE_WIDTH - 44)
+        new Vex.Formatter().joinVoices([voice]).format([voice], showSignature ? MEASURE_WIDTH - 148 : MEASURE_WIDTH - 78)
         voice.draw(context, stave)
 
-        const beams = Vex.Beam.generateBeams(tickables.filter((note) => !note.isRest()))
-        beams.forEach((beam) => beam.setContext(context).draw())
+        try {
+          const beams = Vex.Beam.generateBeams(tickables.filter((note) => !note.isRest()))
+          beams.forEach((beam) => beam.setContext(context).draw())
+        } catch {
+          // Unbeamed notation is better than hiding the measure for unusual MIDI groupings.
+        }
       } catch {
         node.innerHTML = ''
       }
@@ -198,7 +245,7 @@ function MeasureNotation({
     return () => {
       cancelled = true
     }
-  }, [keyName, measure, midi, showSignature, signature.denominator, signature.numerator])
+  }, [clef, keyName, measure, midi, showSignature, signature.denominator, signature.numerator])
 
   return (
     <div className="sheet-measure" data-measure={measure.index}>
