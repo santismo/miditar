@@ -4,8 +4,14 @@ import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
+import { PianoView } from './components/PianoView'
 import { SheetView } from './components/SheetView'
 import { FRETBOARD_THEMES, type FretboardThemeId } from './components/fretboardThemes'
+import {
+  loadExampleSong,
+  loadExampleSongManifest,
+  type ExampleSongEntry,
+} from './lib/exampleSongs'
 import { mapNotesToFretboard } from './lib/fretboard'
 import {
   createDemoMidi,
@@ -42,7 +48,17 @@ type ActiveAudioEngine =
   | { kind: 'synth'; synth: Tone.PolySynth }
   | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: Exclude<PlaybackInstrumentId, 'synth'> }
 type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
+type InstrumentViewMode = 'guitar' | 'piano'
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
+const BUILT_IN_DEMO_EXAMPLE = '__demo__'
+const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
+  'sample:guitar-acoustic',
+  'sample:guitar-nylon',
+  'sample:guitar-electric',
+  'sample:bass-electric',
+  'synth',
+])
+const PIANO_INSTRUMENTS = new Set<PlaybackInstrumentId>(['sample:piano', 'synth'])
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
@@ -102,6 +118,15 @@ function clampFlowDensity(value: number) {
   return Math.min(MAX_FLOW_DENSITY, Math.max(MIN_FLOW_DENSITY, Math.round(value)))
 }
 
+function instrumentsForViewMode(viewMode: InstrumentViewMode) {
+  const allowed = viewMode === 'piano' ? PIANO_INSTRUMENTS : GUITAR_INSTRUMENTS
+  return PLAYBACK_INSTRUMENTS.filter((instrument) => allowed.has(instrument.id))
+}
+
+function defaultInstrumentForViewMode(viewMode: InstrumentViewMode): PlaybackInstrumentId {
+  return viewMode === 'piano' ? 'sample:piano' : 'sample:guitar-acoustic'
+}
+
 function App() {
   const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
@@ -110,6 +135,7 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
+  const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
   const [playbackInstrumentId, setPlaybackInstrumentId] =
@@ -118,6 +144,8 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [audioStatus, setAudioStatus] = useState('')
+  const [exampleSongs, setExampleSongs] = useState<ExampleSongEntry[]>([])
+  const [exampleLoading, setExampleLoading] = useState(false)
   const [recentMidiFiles, setRecentMidiFiles] = useState<RecentMidiFile[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
@@ -133,6 +161,7 @@ function App() {
   const song = songs[songIndex] ?? songs[0]
   const sourceTempoBpm = songTempoBpm(song)
   const playbackRate = speed * (tempoBpm / sourceTempoBpm)
+  const playbackInstruments = useMemo(() => instrumentsForViewMode(instrumentViewMode), [instrumentViewMode])
   const tracks = playableTracks(song)
   const selectedTracks = useMemo(() => {
     const seen = new Set<number>()
@@ -204,6 +233,14 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
+    void loadExampleSongManifest()
+      .then((entries) => {
+        if (!cancelled) setExampleSongs(entries)
+      })
+      .catch(() => {
+        if (!cancelled) setExampleSongs([])
+      })
+
     void loadRecentMidiState()
       .then((state) => {
         if (cancelled || !state?.files.length) return
@@ -224,6 +261,15 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (playbackInstruments.some((instrument) => instrument.id === playbackInstrumentId)) return
+    stopPlayback()
+    releaseAllScrubAudition()
+    sampleEngineRef.current?.releaseAll()
+    setAudioStatus('')
+    setPlaybackInstrumentId(defaultInstrumentForViewMode(instrumentViewMode))
+  }, [instrumentViewMode, playbackInstrumentId, playbackInstruments])
 
   useEffect(() => {
     return () => {
@@ -305,6 +351,7 @@ function App() {
   }
 
   function mappedMidi(note: MidiNote) {
+    if (instrumentViewMode === 'piano') return note.midi
     const placement = notePlacements.get(note.id)
     return placement?.midi ?? note.midi
   }
@@ -536,6 +583,16 @@ function App() {
     setPlaybackInstrumentId(value)
   }
 
+  function updateInstrumentViewMode(value: InstrumentViewMode) {
+    stopPlayback()
+    releaseAllScrubAudition()
+    sampleEngineRef.current?.releaseAll()
+    setAudioStatus('')
+    setError('')
+    setInstrumentViewMode(value)
+    setPlaybackInstrumentId(defaultInstrumentForViewMode(value))
+  }
+
   function exportMappedMidi() {
     if (!virtualTrack) return
     const bytes = exportGuitarMappedMidi(song, virtualTrack, notePlacements)
@@ -557,6 +614,48 @@ function App() {
     setCurrentTime(0)
     setTempoBpm(songTempoBpm(songs[index] ?? song))
     if (recentMidiFiles?.length) void saveRecentMidiState({ files: recentMidiFiles, songIndex: index })
+  }
+
+  async function chooseExampleSong(value: string) {
+    if (!value) return
+    stopPlayback()
+    releaseAllScrubAudition()
+    setError('')
+    setExampleLoading(true)
+
+    try {
+      if (value === BUILT_IN_DEMO_EXAMPLE) {
+        setSongs([DEMO_SONG])
+        setSongIndex(0)
+        setRecentMidiFiles(null)
+        setSelectedTrackIndexes(chooseDefaultTracks(DEMO_SONG))
+        setCurrentTime(0)
+        setTempoBpm(songTempoBpm(DEMO_SONG))
+        setSettingsOpen(false)
+        return
+      }
+
+      const entry = exampleSongs.find((item) => item.file === value)
+      if (!entry) return
+      const loaded = await loadExampleSong(entry)
+      const loadedFile: RecentMidiFile = {
+        name: `${entry.title}.mid`,
+        lastModified: Date.now(),
+        buffer: loaded.buffer,
+      }
+      setSongs([loaded.song])
+      setSongIndex(0)
+      setRecentMidiFiles([loadedFile])
+      setSelectedTrackIndexes(chooseDefaultTracks(loaded.song))
+      setCurrentTime(0)
+      setTempoBpm(songTempoBpm(loaded.song))
+      setSettingsOpen(false)
+      void saveRecentMidiState({ files: [loadedFile], songIndex: 0 })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load example song.')
+    } finally {
+      setExampleLoading(false)
+    }
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -627,6 +726,26 @@ function App() {
               Open MIDI
             </button>
 
+            <label className="field">
+              <span>
+                <FileMusic size={15} />
+                Load Example Song
+              </span>
+              <select
+                value=""
+                disabled={exampleLoading}
+                onChange={(event) => void chooseExampleSong(event.target.value)}
+              >
+                <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
+                <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
+                {exampleSongs.map((entry) => (
+                  <option key={entry.file} value={entry.file}>
+                    {entry.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <button type="button" className="button secondary" onClick={exportMappedMidi} disabled={!virtualTrack}>
               <Download size={18} />
               Export Guitar MIDI
@@ -673,18 +792,31 @@ function App() {
               })}
             </div>
 
-            <label className="toggle-field">
-              <span>Smart Guitar Mode</span>
-              <input
-                type="checkbox"
-                checked={smartGuitarMode}
-                onChange={(event) => {
-                  stopPlayback()
-                  releaseAllScrubAudition()
-                  setSmartGuitarMode(event.target.checked)
-                }}
-              />
+            <label className="field">
+              <span>View Mode</span>
+              <select
+                value={instrumentViewMode}
+                onChange={(event) => updateInstrumentViewMode(event.target.value as InstrumentViewMode)}
+              >
+                <option value="guitar">Guitar Fretboard</option>
+                <option value="piano">Piano Keyboard</option>
+              </select>
             </label>
+
+            {instrumentViewMode === 'guitar' && (
+              <label className="toggle-field">
+                <span>Smart Guitar Mode</span>
+                <input
+                  type="checkbox"
+                  checked={smartGuitarMode}
+                  onChange={(event) => {
+                    stopPlayback()
+                    releaseAllScrubAudition()
+                    setSmartGuitarMode(event.target.checked)
+                  }}
+                />
+              </label>
+            )}
 
             <label className="field">
               <span>
@@ -695,7 +827,7 @@ function App() {
                 value={playbackInstrumentId}
                 onChange={(event) => updatePlaybackInstrument(event.target.value as PlaybackInstrumentId)}
               >
-                {PLAYBACK_INSTRUMENTS.map((instrument) => (
+                {playbackInstruments.map((instrument) => (
                   <option key={instrument.id} value={instrument.id}>
                     {instrument.label}
                   </option>
@@ -746,22 +878,24 @@ function App() {
               <b>{flowDensity}</b>
             </label>
 
-            <label className="field">
-              <span>
-                <Palette size={15} />
-                Fretboard Theme
-              </span>
-              <select
-                value={fretboardTheme}
-                onChange={(event) => setFretboardTheme(event.target.value as FretboardThemeId)}
-              >
-                {FRETBOARD_THEMES.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {instrumentViewMode === 'guitar' && (
+              <label className="field">
+                <span>
+                  <Palette size={15} />
+                  Fretboard Theme
+                </span>
+                <select
+                  value={fretboardTheme}
+                  onChange={(event) => setFretboardTheme(event.target.value as FretboardThemeId)}
+                >
+                  {FRETBOARD_THEMES.map((theme) => (
+                    <option key={theme.id} value={theme.id}>
+                      {theme.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {error && <div className="error-text">{error}</div>}
             {audioStatus && <div className="status-text">{audioStatus}</div>}
@@ -789,15 +923,25 @@ function App() {
           onScrub={scrubTo}
           trackColors={trackColors}
           pixelsPerSecond={flowDensity}
+          viewMode={instrumentViewMode}
         />
-        <section className="neck-panel" data-neck-theme={fretboardTheme} aria-label="Live guitar neck">
-          <Fretboard
-            notes={combinedNotes}
-            placements={notePlacements}
-            currentTime={currentTime}
-            trackColors={trackColors}
-            themeId={fretboardTheme}
-          />
+        <section
+          className="neck-panel"
+          data-neck-theme={fretboardTheme}
+          data-view-mode={instrumentViewMode}
+          aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
+        >
+          {instrumentViewMode === 'piano' ? (
+            <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} />
+          ) : (
+            <Fretboard
+              notes={combinedNotes}
+              placements={notePlacements}
+              currentTime={currentTime}
+              trackColors={trackColors}
+              themeId={fretboardTheme}
+            />
+          )}
         </section>
       </main>
     </div>

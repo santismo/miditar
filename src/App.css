@@ -511,16 +511,37 @@
   pointer-events: none;
 }
 
-.fret-guides div {
+.fret-guides div,
+.piano-guides div {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
   color: #6f7b68;
-  background: rgba(155, 168, 146, 0.16);
   font-size: 10px;
   font-weight: 720;
   text-align: center;
+}
+
+.fret-guides div {
+  width: 1px;
+  background: rgba(155, 168, 146, 0.16);
+}
+
+.piano-guides {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.piano-guides div {
+  border-left: 1px solid rgba(216, 226, 205, 0.11);
+  background: linear-gradient(180deg, rgba(216, 226, 205, 0.04), rgba(216, 226, 205, 0));
+  text-align: left;
+}
+
+.piano-guides div:last-child {
+  border-right: 1px solid rgba(216, 226, 205, 0.11);
 }
 
 .falling-barline {
@@ -605,6 +626,16 @@
   opacity: 0.93;
 }
 
+.falling-note.is-piano {
+  min-width: 6px;
+  border-radius: 4px;
+}
+
+.falling-note.is-piano[data-key-kind="black"] {
+  border-color: rgba(245, 248, 240, 0.42) !important;
+  filter: brightness(0.92);
+}
+
 .falling-note span {
   position: absolute;
   left: 50%;
@@ -676,11 +707,87 @@
     #071018;
 }
 
+.neck-panel[data-view-mode="piano"] {
+  background:
+    linear-gradient(180deg, rgba(240, 198, 90, 0.08), rgba(240, 198, 90, 0) 58%),
+    #0a0d0a;
+}
+
 .fretboard {
   width: 100%;
   height: 100%;
   display: block;
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.42));
+}
+
+.piano-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid #2b352a;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: #080a08;
+}
+
+.piano-white-keys,
+.piano-black-keys {
+  position: absolute;
+  inset: 0;
+}
+
+.piano-key {
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+  user-select: none;
+}
+
+.piano-key.is-white {
+  top: 0;
+  bottom: 0;
+  border-right: 1px solid #101410;
+  color: #66705f;
+  background: linear-gradient(180deg, #f1f0e7, #bbbeb0);
+  padding-bottom: 8px;
+}
+
+.piano-key.is-black {
+  top: 0;
+  height: 62%;
+  z-index: 2;
+  border: 1px solid #050605;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(180deg, #242923, #080a08);
+  box-shadow: 0 7px 12px rgba(0, 0, 0, 0.42);
+}
+
+.piano-active-note {
+  position: absolute;
+  z-index: 5;
+  bottom: 10px;
+  min-width: 14px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  transform: translateX(0);
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  border-radius: 5px;
+  color: #080a08;
+  font-size: 10px;
+  font-weight: 860;
+  box-shadow: 0 0 0 4px rgba(240, 198, 90, 0.18), 0 10px 16px rgba(0, 0, 0, 0.35);
+}
+
+.piano-active-note.is-black {
+  bottom: 42%;
+  color: #fff;
 }
 
 .fret-number,

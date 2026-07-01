@@ -7,6 +7,9 @@ import {
   FRETBOARD_VIEW_WIDTH,
   fretLineX,
 } from '../lib/fretboardLayout'
+import { PIANO_KEYS, pianoKeySlot } from '../lib/pianoLayout'
+
+type FlowViewMode = 'guitar' | 'piano'
 
 type FlowViewProps = {
   midi: ParsedMidi
@@ -18,9 +21,12 @@ type FlowViewProps = {
   onScrub: (time: number) => void
   trackColors?: Record<number, string>
   pixelsPerSecond?: number
+  viewMode?: FlowViewMode
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 168
+const SMOOTH_SCROLL_FACTOR = 0.38
+const MAX_SMOOTH_SCROLL_DISTANCE = 720
 
 function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
   return Math.max(0, midi.duration - time) * pixelsPerSecond
@@ -87,6 +93,7 @@ export function FlowView({
   onScrub,
   trackColors = {},
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
+  viewMode = 'guitar',
 }: FlowViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
@@ -119,10 +126,15 @@ export function FlowView({
     const container = scrollRef.current
     if (!container) return
     const targetTop = timelineTop(midi, currentTime, pixelsPerSecond)
-    if (Math.abs(container.scrollTop - targetTop) < 0.5) return
+    const delta = targetTop - container.scrollTop
+    if (Math.abs(delta) < 0.5) return
     programmaticScrollUntilRef.current = performance.now() + 220
+    if (isPlaying && Math.abs(delta) < MAX_SMOOTH_SCROLL_DISTANCE) {
+      container.scrollTop = Math.max(0, container.scrollTop + delta * SMOOTH_SCROLL_FACTOR)
+      return
+    }
     container.scrollTop = Math.max(0, targetTop)
-  }, [currentTime, midi, pixelsPerSecond])
+  }, [currentTime, isPlaying, midi, pixelsPerSecond])
 
   function beginUserScroll() {
     if (isPlaying) return
@@ -200,13 +212,23 @@ export function FlowView({
                 style={{ top: measure.top, height: measure.height }}
               />
             ))}
-            <div className="fret-guides" aria-hidden="true">
-              {Array.from({ length: maxFret + 1 }).map((_, fret) => (
-                <div key={fret} style={{ left: `${(fretLineX(fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100}%` }}>
-                  {fret > 0 && [3, 5, 7, 9, 12, 15, 17].includes(fret) ? fret : ''}
-                </div>
-              ))}
-            </div>
+            {viewMode === 'piano' ? (
+              <div className="piano-guides" aria-hidden="true">
+                {PIANO_KEYS.filter((key) => !key.isBlack).map((key) => (
+                  <div key={key.midi} style={{ left: `${key.left}%`, width: `${key.width}%` }}>
+                    {key.label}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="fret-guides" aria-hidden="true">
+                {Array.from({ length: maxFret + 1 }).map((_, fret) => (
+                  <div key={fret} style={{ left: `${(fretLineX(fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100}%` }}>
+                    {fret > 0 && [3, 5, 7, 9, 12, 15, 17].includes(fret) ? fret : ''}
+                  </div>
+                ))}
+              </div>
+            )}
             {measureMarkers.map((measure) => (
               <div key={`line-${measure.index}`} className="falling-barline" style={{ top: measure.lineTop }}>
                 <span>{measure.index + 1}</span>
@@ -226,33 +248,54 @@ export function FlowView({
                 </div>
               ))}
             {notes.map((note) => {
-              const placement = placements.get(note.id)
-              if (!placement) return null
-              const string = GUITAR_STRINGS[placement.stringIndex]
-              const slot = fretSlot(placement, maxFret)
-              const x = (slot.left / FRETBOARD_VIEW_WIDTH) * 100
-              const width = Math.max(0.92, (slot.width / FRETBOARD_VIEW_WIDTH) * 100)
+              const trackColor = trackColors[note.trackIndex]
+              let x = 0
+              let width = 0
+              let borderColor = trackColor ?? '#f0c65a'
+              let background = `linear-gradient(180deg, ${trackColor ?? '#f0c65a'}, rgba(255,255,255,.12))`
+              let title = `${note.trackName}: ${noteName(note.midi)}`
+              let label = noteName(note.midi).replace(/\d+$/, '')
+              let keyKind = 'white'
+
+              if (viewMode === 'piano') {
+                const slot = pianoKeySlot(note.midi)
+                x = slot.left
+                width = Math.max(0.62, slot.width)
+                keyKind = slot.isBlack ? 'black' : 'white'
+              } else {
+                const placement = placements.get(note.id)
+                if (!placement) return null
+                const string = GUITAR_STRINGS[placement.stringIndex]
+                const slot = fretSlot(placement, maxFret)
+                x = (slot.left / FRETBOARD_VIEW_WIDTH) * 100
+                width = Math.max(0.92, (slot.width / FRETBOARD_VIEW_WIDTH) * 100)
+                borderColor = string.color
+                background = `linear-gradient(180deg, ${trackColor ?? string.color}, rgba(255,255,255,.12))`
+                const displayMidi = placement.midi ?? note.midi
+                title = `${note.trackName}: ${noteName(displayMidi)} on ${string.name} fret ${placement.fret}`
+                label = String(placement.fret)
+              }
+
               const y = timelineTop(midi, note.time, pixelsPerSecond)
               const height = Math.max(16, note.duration * pixelsPerSecond)
               const active = note.time <= currentTime && note.time + note.duration >= currentTime
-              const trackColor = trackColors[note.trackIndex] ?? string.color
-              const displayMidi = placement.midi ?? note.midi
 
               return (
                 <div
                   key={note.id}
-                  className={`falling-note ${active ? 'is-active' : ''}`}
+                  className={`falling-note ${viewMode === 'piano' ? 'is-piano' : 'is-guitar'} ${active ? 'is-active' : ''}`}
+                  data-key-kind={keyKind}
                   style={{
                     left: `${x}%`,
                     width: `max(8px, ${width}%)`,
                     top: y,
                     height,
-                    borderColor: string.color,
-                    background: `linear-gradient(180deg, ${trackColor}, rgba(255,255,255,.12))`,
+                    borderColor,
+                    background,
                   }}
-                  title={`${note.trackName}: ${noteName(displayMidi)} on ${string.name} fret ${placement.fret}`}
+                  title={title}
                 >
-                  <span>{placement.fret}</span>
+                  <span>{label}</span>
                 </div>
               )
             })}

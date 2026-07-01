@@ -23,11 +23,11 @@ type Measure = {
 type VexflowModule = typeof import('vexflow')
 type VexStaveNote = InstanceType<VexflowModule['StaveNote']>
 type ClefName = 'treble' | 'bass'
-type VexDurationName = 'w' | 'h' | 'q' | '8' | '16'
+type VexDurationName = 'w' | 'h' | 'q' | '8' | '16' | '32'
 
 const MEASURE_WIDTH = 360
 const MEASURE_HEIGHT = 188
-const SIXTEENTH_DIVISIONS = 4
+const THIRTY_SECOND_DIVISIONS = 8
 const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
 const FLAT_NAMES = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b']
 const MAJOR_KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#']
@@ -73,17 +73,19 @@ function currentMarker(markers: MidiMarker[], currentTime: number) {
 }
 
 function durationToVex(ticks: number, ppq: number) {
-  const unitTicks = ppq / SIXTEENTH_DIVISIONS
+  const unitTicks = ppq / THIRTY_SECOND_DIVISIONS
   const units = Math.max(1, Math.round(ticks / unitTicks))
   const durations: { units: number; duration: VexDurationName; dots: number }[] = [
-    { units: 16, duration: 'w', dots: 0 },
-    { units: 12, duration: 'h', dots: 1 },
-    { units: 8, duration: 'h', dots: 0 },
-    { units: 6, duration: 'q', dots: 1 },
-    { units: 4, duration: 'q', dots: 0 },
-    { units: 3, duration: '8', dots: 1 },
-    { units: 2, duration: '8', dots: 0 },
-    { units: 1, duration: '16', dots: 0 },
+    { units: 32, duration: 'w', dots: 0 },
+    { units: 24, duration: 'h', dots: 1 },
+    { units: 16, duration: 'h', dots: 0 },
+    { units: 12, duration: 'q', dots: 1 },
+    { units: 8, duration: 'q', dots: 0 },
+    { units: 6, duration: '8', dots: 1 },
+    { units: 4, duration: '8', dots: 0 },
+    { units: 3, duration: '16', dots: 1 },
+    { units: 2, duration: '16', dots: 0 },
+    { units: 1, duration: '32', dots: 0 },
   ]
   const match = durations.find((item) => units >= item.units) ?? durations[durations.length - 1]
   return { duration: match.duration, dots: match.dots, ticks: match.units * unitTicks }
@@ -119,7 +121,7 @@ function clefForMeasure(measure: Measure): ClefName {
 
 function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, clef: ClefName, Vex: VexflowModule) {
   let remaining = ticks
-  while (remaining >= ppq / SIXTEENTH_DIVISIONS) {
+  while (remaining >= ppq / THIRTY_SECOND_DIVISIONS) {
     const duration = durationToVex(remaining, ppq)
     const rest = new Vex.StaveNote({
       clef,
@@ -133,7 +135,7 @@ function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, clef: Cl
 }
 
 function buildNotationNotes(measure: Measure, midi: ParsedMidi, clef: ClefName, Vex: VexflowModule) {
-  const unitTicks = midi.ppq / SIXTEENTH_DIVISIONS
+  const unitTicks = midi.ppq / THIRTY_SECOND_DIVISIONS
   const preferFlats = (midi.keySignatures[0]?.sf ?? 0) < 0
   const groups = new Map<number, MidiNote[]>()
 
@@ -186,10 +188,12 @@ function MeasureNotation({
   measure,
   midi,
   showSignature,
+  showClef,
 }: {
   measure: Measure
   midi: ParsedMidi
   showSignature: boolean
+  showClef: boolean
 }) {
   const notationRef = useRef<HTMLDivElement | null>(null)
   const signature = activeTimeSignature(midi)
@@ -215,7 +219,7 @@ function MeasureNotation({
         context.setStrokeStyle('#d8e0d0')
 
         const stave = new Vex.Stave(12, 54, MEASURE_WIDTH - 24)
-        stave.addClef(clef)
+        if (showClef) stave.addClef(clef)
         if (showSignature) {
           if (keyName) stave.addKeySignature(keyName)
           stave.addTimeSignature(`${signature.numerator}/${signature.denominator}`)
@@ -228,15 +232,10 @@ function MeasureNotation({
           beatValue: signature.denominator,
         }).setMode(Vex.Voice.Mode.SOFT)
         voice.addTickables(tickables)
-        new Vex.Formatter().joinVoices([voice]).format([voice], showSignature ? MEASURE_WIDTH - 148 : MEASURE_WIDTH - 78)
+        new Vex.Formatter()
+          .joinVoices([voice])
+          .format([voice], showSignature || showClef ? MEASURE_WIDTH - 148 : MEASURE_WIDTH - 56)
         voice.draw(context, stave)
-
-        try {
-          const beams = Vex.Beam.generateBeams(tickables.filter((note) => !note.isRest()))
-          beams.forEach((beam) => beam.setContext(context).draw())
-        } catch {
-          // Unbeamed notation is better than hiding the measure for unusual MIDI groupings.
-        }
       } catch {
         node.innerHTML = ''
       }
@@ -245,7 +244,7 @@ function MeasureNotation({
     return () => {
       cancelled = true
     }
-  }, [clef, keyName, measure, midi, showSignature, signature.denominator, signature.numerator])
+  }, [clef, keyName, measure, midi, showClef, showSignature, signature.denominator, signature.numerator])
 
   return (
     <div className="sheet-measure" data-measure={measure.index}>
@@ -352,7 +351,13 @@ export function SheetView({
           <div className="sheet-system">
             <div className="sheet-pad" aria-hidden="true" />
             {measures.map((measure) => (
-              <MeasureNotation key={measure.index} measure={measure} midi={midi} showSignature={measure.index === 0} />
+              <MeasureNotation
+                key={measure.index}
+                measure={measure}
+                midi={midi}
+                showSignature={measure.index === 0}
+                showClef={measure.index === 0}
+              />
             ))}
             <div className="sheet-pad" aria-hidden="true" />
           </div>
