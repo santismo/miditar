@@ -1,6 +1,7 @@
 import type { MidiNote } from '../lib/midi'
 import { noteName } from '../lib/midi'
 import { FULL_PIANO_RANGE, pianoKeysForRange, type PianoRange } from '../lib/pianoLayout'
+import { NoteGlyph } from './NoteGlyph'
 
 type PianoViewProps = {
   notes: MidiNote[]
@@ -41,7 +42,7 @@ export function PianoView({ notes, currentTime, trackColors = {}, range = FULL_P
         }}
         title={title}
       >
-        {label && (activeNote ? <strong>{label}</strong> : <em>{label}</em>)}
+        {label && (activeNote ? <strong><NoteGlyph name={label} /></strong> : <em>{label}</em>)}
       </span>
     )
   }

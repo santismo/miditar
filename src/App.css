@@ -208,6 +208,12 @@
   gap: 10px;
 }
 
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .field {
   min-width: 0;
   display: grid;
@@ -239,6 +245,17 @@
   font: inherit;
   font-size: 13px;
   padding: 8px;
+}
+
+.compact-field {
+  gap: 5px;
+  font-size: 11px;
+}
+
+.compact-field select {
+  min-height: 34px;
+  padding: 6px;
+  font-size: 12px;
 }
 
 .toggle-field {
@@ -643,7 +660,7 @@
   filter: brightness(0.92);
 }
 
-.falling-note span {
+.falling-note > .note-label {
   position: absolute;
   left: 50%;
   bottom: 4px;
@@ -659,7 +676,44 @@
   font-weight: 780;
 }
 
-.falling-note.is-piano span {
+.note-glyph {
+  min-width: 0;
+  min-height: 1.35em;
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  place-items: center;
+  line-height: 1;
+}
+
+.note-glyph i,
+.note-glyph b,
+.note-glyph small {
+  font: inherit;
+  font-style: normal;
+  line-height: inherit;
+}
+
+.note-glyph i {
+  font-size: 0.75em;
+  font-weight: 900;
+}
+
+.note-glyph b {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-weight: 880;
+}
+
+.note-glyph small {
+  font-size: 0.72em;
+}
+
+.note-glyph:not(.has-accidental) {
+  grid-template-rows: 1fr;
+}
+
+.falling-note.is-piano > .note-label {
   width: calc(100% - 2px);
   min-width: 0;
   max-width: 100%;
@@ -668,6 +722,14 @@
   font-size: 8px;
   text-overflow: clip;
   white-space: nowrap;
+}
+
+.falling-note.is-piano[data-key-kind="black"] .note-label {
+  font-size: 7px;
+}
+
+.falling-note.is-piano .note-glyph {
+  width: 100%;
 }
 
 .falling-note.is-active {
@@ -822,7 +884,15 @@
 }
 
 .piano-key.is-black strong {
-  font-size: 8px;
+  font-size: 7px;
+}
+
+.piano-key strong .note-glyph {
+  width: 100%;
+}
+
+.piano-key.is-black strong .note-glyph {
+  line-height: 0.9;
 }
 
 .fret-number,
@@ -913,6 +983,10 @@
 
   .neck-panel {
     padding: 0 10px 3px;
+  }
+
+  .channel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .fret-number,

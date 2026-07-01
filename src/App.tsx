@@ -15,6 +15,7 @@ import {
 import { mapNotesToFretboard } from './lib/fretboard'
 import {
   createDemoMidi,
+  activeMarkerAtTime,
   exportGuitarMappedMidi,
   noteName,
   parseMidiFile,
@@ -24,6 +25,16 @@ import {
 } from './lib/midi'
 import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
 import { pianoRangeForNotes } from './lib/pianoLayout'
+import {
+  DEFAULT_STRING_CHANNEL_MAP,
+  STRING_CHANNEL_PRESETS,
+  STRING_CHANNEL_STRINGS,
+  clampMidiChannel,
+  normalizeStringChannelMap,
+  presetById,
+  type StringChannelMap,
+  type StringChannelPresetId,
+} from './lib/stringChannels'
 import {
   isSampleInstrument,
   playbackInstrumentLabel,
@@ -72,17 +83,16 @@ function chooseDefaultTracks(song: ParsedMidi): TrackSelection {
   const tracks = playableTracks(song)
   const piano = tracks.find((track) => /piano|keys|keyboard|rhodes|wurl/i.test(track.name))
   const melody = tracks.find((track) => /melody|melodie|lead|solo/i.test(track.name))
-  const bass = tracks.find((track) => /bass|upright|contrabass/i.test(track.name))
   const guitar = tracks.find((track) => /guitar/i.test(track.name))
   const fallback = [...tracks].sort((a, b) => b.notes.length - a.notes.length)
   const first = piano?.index ?? melody?.index ?? guitar?.index ?? fallback[0]?.index ?? null
   const second =
     melody && melody.index !== first
       ? melody.index
-      : piano && piano.index !== first
-        ? piano.index
-        : fallback.find((track) => track.index !== first)?.index ?? null
-  const third = bass && bass.index !== first && bass.index !== second ? bass.index : null
+        : piano && piano.index !== first
+          ? piano.index
+          : fallback.find((track) => track.index !== first)?.index ?? null
+  const third = null
   return [first, second, third]
 }
 
@@ -96,13 +106,7 @@ function trackLabel(track: MidiTrack) {
 }
 
 function currentMarkerText(song: ParsedMidi, currentTime: number) {
-  let active = ''
-  for (const marker of song.markers) {
-    if (marker.type !== 'marker') continue
-    if (marker.time <= currentTime + 0.02) active = marker.text
-    else break
-  }
-  return active
+  return activeMarkerAtTime(song, currentTime)?.text ?? ''
 }
 
 function clampTime(time: number, song: ParsedMidi) {
@@ -145,6 +149,9 @@ function App() {
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
+  const [useSourceStringChannels, setUseSourceStringChannels] = useState(false)
+  const [stringChannelPreset, setStringChannelPreset] = useState<StringChannelPresetId>('miditar-11')
+  const [stringChannelMap, setStringChannelMap] = useState<StringChannelMap>(DEFAULT_STRING_CHANNEL_MAP)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
   const [instrumentHeight, setInstrumentHeight] = useState(DEFAULT_INSTRUMENT_HEIGHT)
   const [playbackInstrumentId, setPlaybackInstrumentId] =
@@ -227,8 +234,10 @@ function App() {
         smart: smartGuitarMode,
         melodyTrackIndexes,
         bassTrackIndexes,
+        sourceChannelMap: stringChannelMap,
+        useSourceChannels: useSourceStringChannels,
       }),
-    [bassTrackIndexes, combinedNotes, melodyTrackIndexes, smartGuitarMode],
+    [bassTrackIndexes, combinedNotes, melodyTrackIndexes, smartGuitarMode, stringChannelMap, useSourceStringChannels],
   )
   const currentChord = currentMarkerText(song, currentTime)
 
@@ -612,9 +621,24 @@ function App() {
     setPlaybackInstrumentId(defaultInstrumentForViewMode(value))
   }
 
+  function updateStringChannelPreset(value: StringChannelPresetId) {
+    setStringChannelPreset(value)
+    if (value === 'custom') return
+    setStringChannelMap(presetById(value).channels)
+  }
+
+  function updateStringChannel(stringIndex: number, channel: number) {
+    setStringChannelPreset('custom')
+    setStringChannelMap((current) => {
+      const next = normalizeStringChannelMap(current)
+      next[stringIndex] = clampMidiChannel(channel)
+      return next
+    })
+  }
+
   function exportMappedMidi() {
     if (!virtualTrack) return
-    const bytes = exportGuitarMappedMidi(song, virtualTrack, notePlacements)
+    const bytes = exportGuitarMappedMidi(song, virtualTrack, notePlacements, stringChannelMap)
     const blob = new Blob([bytes], { type: 'audio/midi' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -823,18 +847,68 @@ function App() {
             </label>
 
             {instrumentViewMode === 'guitar' && (
-              <label className="toggle-field">
-                <span>Smart Guitar Mode</span>
-                <input
-                  type="checkbox"
-                  checked={smartGuitarMode}
-                  onChange={(event) => {
-                    stopPlayback()
-                    releaseAllScrubAudition()
-                    setSmartGuitarMode(event.target.checked)
-                  }}
-                />
-              </label>
+              <>
+                <label className="toggle-field">
+                  <span>Smart Guitar Mode</span>
+                  <input
+                    type="checkbox"
+                    checked={smartGuitarMode}
+                    onChange={(event) => {
+                      stopPlayback()
+                      releaseAllScrubAudition()
+                      setSmartGuitarMode(event.target.checked)
+                    }}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>String Channels</span>
+                  <select
+                    value={stringChannelPreset}
+                    onChange={(event) => updateStringChannelPreset(event.target.value as StringChannelPresetId)}
+                  >
+                    {STRING_CHANNEL_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+
+                {stringChannelPreset === 'custom' && (
+                  <div className="channel-grid">
+                    {STRING_CHANNEL_STRINGS.map((string) => (
+                      <label className="field compact-field" key={string.index}>
+                        <span>{string.label}</span>
+                        <select
+                          value={stringChannelMap[string.index]}
+                          onChange={(event) => updateStringChannel(string.index, Number(event.target.value))}
+                        >
+                          {Array.from({ length: 16 }).map((_, index) => (
+                            <option key={index + 1} value={index + 1}>
+                              ch {index + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <label className="toggle-field">
+                  <span>Use MIDI Channels As Strings</span>
+                  <input
+                    type="checkbox"
+                    checked={useSourceStringChannels}
+                    onChange={(event) => {
+                      stopPlayback()
+                      releaseAllScrubAudition()
+                      setUseSourceStringChannels(event.target.checked)
+                    }}
+                  />
+                </label>
+              </>
             )}
 
             <label className="field">

@@ -1,4 +1,5 @@
 import type { MidiNote, MidiPlacement } from './midi'
+import { DEFAULT_STRING_CHANNEL_MAP, stringIndexForChannel, type StringChannelMap } from './stringChannels'
 
 export type GuitarString = {
   index: number
@@ -36,6 +37,8 @@ export type FretboardMapOptions = {
   smart?: boolean
   melodyTrackIndexes?: Set<number>
   bassTrackIndexes?: Set<number>
+  sourceChannelMap?: StringChannelMap
+  useSourceChannels?: boolean
 }
 
 type NormalizedNote = {
@@ -89,6 +92,8 @@ type RequiredSmartOptions = {
   maxFret: number
   melodyTrackIndexes: Set<number>
   bassTrackIndexes: Set<number>
+  sourceChannelMap: StringChannelMap
+  useSourceChannels: boolean
 }
 
 function melodyIndex(notes: NormalizedNote[]) {
@@ -266,6 +271,15 @@ function chooseLiteralPlacement(note: MidiNote, previousPosition: number | null,
   })[0]
 }
 
+function chooseSourceChannelPlacement(note: MidiNote, options: RequiredSmartOptions): FretCandidate | null {
+  if (!options.useSourceChannels) return null
+  const stringIndex = stringIndexForChannel(options.sourceChannelMap, note.channel)
+  if (stringIndex < 0) return null
+  const fret = note.midi - GUITAR_STRINGS[stringIndex].midi
+  if (fret < 0 || fret > options.maxFret) return null
+  return { stringIndex, fret, midi: note.midi }
+}
+
 function bestSmartVoicing(
   group: MidiNote[],
   options: RequiredSmartOptions,
@@ -297,6 +311,8 @@ function normalizeOptions(optionsOrMaxFret: FretboardMapOptions | number): Requi
       smart: true,
       melodyTrackIndexes: new Set(),
       bassTrackIndexes: new Set(),
+      sourceChannelMap: DEFAULT_STRING_CHANNEL_MAP,
+      useSourceChannels: false,
     }
   }
 
@@ -305,6 +321,8 @@ function normalizeOptions(optionsOrMaxFret: FretboardMapOptions | number): Requi
     smart: optionsOrMaxFret.smart ?? true,
     melodyTrackIndexes: optionsOrMaxFret.melodyTrackIndexes ?? new Set(),
     bassTrackIndexes: optionsOrMaxFret.bassTrackIndexes ?? new Set(),
+    sourceChannelMap: optionsOrMaxFret.sourceChannelMap ?? DEFAULT_STRING_CHANNEL_MAP,
+    useSourceChannels: optionsOrMaxFret.useSourceChannels ?? false,
   }
 }
 
@@ -315,7 +333,8 @@ export function mapNotesToFretboard(notes: MidiNote[], optionsOrMaxFret: Fretboa
 
   if (!options.smart) {
     for (const note of [...notes].sort((a, b) => a.tick - b.tick || a.midi - b.midi)) {
-      const placement = chooseLiteralPlacement(note, previousPosition, options.maxFret)
+      const placement: FretCandidate | null =
+        chooseSourceChannelPlacement(note, options) ?? chooseLiteralPlacement(note, previousPosition, options.maxFret)
       if (!placement) continue
       placements.set(note.id, {
         noteId: note.id,
@@ -328,7 +347,20 @@ export function mapNotesToFretboard(notes: MidiNote[], optionsOrMaxFret: Fretboa
   }
 
   for (const group of groupByStart(notes)) {
-    const { notes: normalized, selected } = bestSmartVoicing(group, options, previousPosition)
+    const remaining = group.filter((note) => {
+      const sourcePlacement = chooseSourceChannelPlacement(note, options)
+      if (!sourcePlacement) return true
+      placements.set(note.id, {
+        noteId: note.id,
+        stringIndex: sourcePlacement.stringIndex,
+        fret: sourcePlacement.fret,
+      })
+      if (sourcePlacement.fret > 0) previousPosition = sourcePlacement.fret
+      return false
+    })
+    if (!remaining.length) continue
+
+    const { notes: normalized, selected } = bestSmartVoicing(remaining, options, previousPosition)
     if (!selected.length) continue
 
     for (let index = 0; index < normalized.length; index += 1) {

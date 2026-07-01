@@ -1,3 +1,5 @@
+import { DEFAULT_STRING_CHANNEL_MAP, normalizeStringChannelMap, type StringChannelMap } from './stringChannels'
+
 export type MidiNote = {
   id: string
   trackIndex: number
@@ -197,6 +199,20 @@ export function secondsToTicks(midi: ParsedMidi, seconds: number) {
 
 export function midiTicksToSeconds(midi: ParsedMidi, tick: number) {
   return ticksToSeconds(tick, midi.tempos, midi.ppq)
+}
+
+export function activeMarkerAtTick(markers: MidiMarker[], tick: number, toleranceTicks = 1) {
+  let active: MidiMarker | null = null
+  for (const marker of markers) {
+    if (marker.type !== 'marker') continue
+    if (marker.tick <= tick + toleranceTicks) active = marker
+    else break
+  }
+  return active
+}
+
+export function activeMarkerAtTime(midi: ParsedMidi, time: number, toleranceTicks = 1) {
+  return activeMarkerAtTick(midi.markers, secondsToTicks(midi, time), toleranceTicks)
 }
 
 export function noteName(midi: number) {
@@ -464,7 +480,9 @@ export function exportGuitarMappedMidi(
   source: ParsedMidi,
   track: MidiTrack,
   placements: Map<string, MidiPlacement>,
+  stringChannelMap: StringChannelMap = DEFAULT_STRING_CHANNEL_MAP,
 ) {
+  const outputChannels = normalizeStringChannelMap(stringChannelMap)
   const endTick = Math.max(source.durationTicks, ...track.notes.map((note) => note.endTick))
   const metaEvents: Array<{ tick: number; order: number; bytes: number[] }> = [
     { tick: 0, order: 0, bytes: metaEvent(0x03, stringBytes(`${source.title} chords`)) },
@@ -499,14 +517,14 @@ export function exportGuitarMappedMidi(
   ]
 
   for (let stringIndex = 0; stringIndex < 6; stringIndex += 1) {
-    const channel = 10 + stringIndex
+    const channel = outputChannels[stringIndex] - 1
     guitarEvents.push({ tick: 0, order: 1, bytes: [0xc0 | channel, 26] })
   }
 
   for (const note of track.notes) {
     const placement = placements.get(note.id)
     if (!placement) continue
-    const channel = 10 + placement.stringIndex
+    const channel = outputChannels[placement.stringIndex] - 1
     const midi = placement.midi ?? note.midi
     const velocity = Math.min(127, Math.max(1, Math.round(note.velocity * 127)))
     guitarEvents.push({ tick: note.tick, order: 3, bytes: [0x90 | channel, midi, velocity] })

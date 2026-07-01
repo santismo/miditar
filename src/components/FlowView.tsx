@@ -1,6 +1,6 @@
-import { type PointerEvent, useEffect, useMemo, useRef } from 'react'
+import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef } from 'react'
 import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
-import { midiTicksToSeconds, noteName } from '../lib/midi'
+import { activeMarkerAtTick, midiTicksToSeconds, noteName, secondsToTicks } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import {
   FRETBOARD_LEFT,
@@ -8,6 +8,7 @@ import {
   fretLineX,
 } from '../lib/fretboardLayout'
 import { FULL_PIANO_RANGE, pianoKeysForRange, pianoKeySlot, type PianoRange } from '../lib/pianoLayout'
+import { NoteGlyph } from './NoteGlyph'
 
 type FlowViewMode = 'guitar' | 'piano'
 
@@ -33,16 +34,6 @@ function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
   return Math.max(0, midi.duration - time) * pixelsPerSecond
 }
 
-function currentMarker(markers: MidiMarker[], currentTime: number) {
-  let active: MidiMarker | null = null
-  for (const marker of markers) {
-    if (marker.type !== 'marker') continue
-    if (marker.time <= currentTime + 0.02) active = marker
-    else break
-  }
-  return active
-}
-
 function getMeasureTicks(midi: ParsedMidi) {
   const signature = midi.timeSignatures[0]
   if (!signature) return midi.ppq * 4
@@ -51,16 +42,6 @@ function getMeasureTicks(midi: ParsedMidi) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
-}
-
-function markerAt(markers: MidiMarker[], time: number) {
-  let active: MidiMarker | null = null
-  for (const marker of markers) {
-    if (marker.type !== 'marker') continue
-    if (marker.time <= time + 0.02) active = marker
-    else break
-  }
-  return active
 }
 
 function measureNumberForTick(tick: number, measureTicks: number) {
@@ -84,6 +65,10 @@ function fretSlot(placement: MidiPlacement, maxFret: number) {
   return { left, right, width: right - left }
 }
 
+function pitchClassLabel(midi: number) {
+  return noteName(midi).replace(/-?\d+$/, '')
+}
+
 export function FlowView({
   midi,
   notes,
@@ -102,7 +87,8 @@ export function FlowView({
   const userScrollRef = useRef(false)
   const userScrollTimerRef = useRef<number | null>(null)
   const timelineScrubbingRef = useRef(false)
-  const marker = currentMarker(markers, currentTime)
+  const currentTick = secondsToTicks(midi, currentTime)
+  const marker = activeMarkerAtTick(markers, currentTick)
   const contentHeight = Math.max(520, midi.duration * pixelsPerSecond)
   const maxFret = 22
   const pianoKeys = useMemo(() => pianoKeysForRange(pianoRange), [pianoRange])
@@ -120,7 +106,7 @@ export function FlowView({
         top: timelineTop(midi, endTime, pixelsPerSecond),
         lineTop: timelineTop(midi, startTime, pixelsPerSecond),
         height: Math.max(1, timelineTop(midi, startTime, pixelsPerSecond) - timelineTop(midi, endTime, pixelsPerSecond)),
-        marker: markerAt(markers, startTime),
+        marker: activeMarkerAtTick(markers, startTick),
       }
     })
   }, [markers, measureTicks, midi, pixelsPerSecond])
@@ -261,7 +247,7 @@ export function FlowView({
               let borderColor = trackColor ?? '#f0c65a'
               let background = `linear-gradient(180deg, ${trackColor ?? '#f0c65a'}, rgba(255,255,255,.12))`
               let title = `${note.trackName}: ${noteName(note.midi)}`
-              let label = noteName(note.midi).replace(/\d+$/, '')
+              let label: ReactNode = <NoteGlyph name={pitchClassLabel(note.midi)} />
               let keyKind = 'white'
 
               if (viewMode === 'piano') {
@@ -302,7 +288,7 @@ export function FlowView({
                   }}
                   title={title}
                 >
-                  <span>{label}</span>
+                  <span className="note-label">{label}</span>
                 </div>
               )
             })}

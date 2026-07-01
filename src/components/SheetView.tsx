@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { MidiMarker, MidiNote, ParsedMidi } from '../lib/midi'
-import { midiTicksToSeconds, secondsToTicks } from '../lib/midi'
+import { activeMarkerAtTick, midiTicksToSeconds, secondsToTicks } from '../lib/midi'
 
 type SheetViewProps = {
   midi: ParsedMidi
@@ -27,6 +27,9 @@ type VexDurationName = 'w' | 'h' | 'q' | '8' | '16' | '32'
 
 const MEASURE_WIDTH = 360
 const MEASURE_HEIGHT = 188
+const MEASURE_GAP = 11
+const MEASURE_TIME_LEFT = 32
+const MEASURE_TIME_WIDTH = MEASURE_WIDTH - 62
 const THIRTY_SECOND_DIVISIONS = 8
 const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
 const FLAT_NAMES = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b']
@@ -60,16 +63,6 @@ function keySignatureName(midi: ParsedMidi) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
-}
-
-function currentMarker(markers: MidiMarker[], currentTime: number) {
-  let active: MidiMarker | null = null
-  for (const marker of markers) {
-    if (marker.type !== 'marker') continue
-    if (marker.time <= currentTime + 0.02) active = marker
-    else break
-  }
-  return active
 }
 
 function durationToVex(ticks: number, ppq: number) {
@@ -252,7 +245,7 @@ function MeasureNotation({
       <span className="measure-number">{measure.index + 1}</span>
       {measure.markers.map((marker) => {
         const measureTicks = measure.end - measure.start
-        const x = 32 + ((marker.tick - measure.start) / measureTicks) * (MEASURE_WIDTH - 62)
+        const x = MEASURE_TIME_LEFT + ((marker.tick - measure.start) / measureTicks) * MEASURE_TIME_WIDTH
         return (
           <span key={`${marker.tick}-${marker.text}`} className="sheet-chord" style={{ left: x }}>
             {marker.text}
@@ -278,7 +271,7 @@ export function SheetView({
   const currentTick = secondsToTicks(midi, currentTime)
   const measureTicks = getMeasureTicks(midi)
   const measureCount = Math.max(1, Math.ceil(midi.durationTicks / measureTicks))
-  const marker = currentMarker(markers, currentTime)
+  const marker = activeMarkerAtTick(markers, currentTick)
 
   const measures = useMemo(() => {
     return Array.from({ length: measureCount }).map((_, index) => {
@@ -297,7 +290,12 @@ export function SheetView({
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const absoluteX = (currentTick / measureTicks) * MEASURE_WIDTH
+    const measureIndex = Math.floor(currentTick / measureTicks)
+    const localTick = currentTick - measureIndex * measureTicks
+    const absoluteX =
+      measureIndex * (MEASURE_WIDTH + MEASURE_GAP) +
+      MEASURE_TIME_LEFT +
+      (localTick / measureTicks) * MEASURE_TIME_WIDTH
     if (Math.abs(container.scrollLeft - absoluteX) < 0.5) return
     programmaticScrollUntilRef.current = performance.now() + 220
     container.scrollLeft = Math.max(0, absoluteX)
@@ -321,8 +319,11 @@ export function SheetView({
     if (!container || isPlaying || !userScrollRef.current || performance.now() < programmaticScrollUntilRef.current) {
       return
     }
-    const absoluteX = container.scrollLeft
-    const tick = clamp((absoluteX / MEASURE_WIDTH) * measureTicks, 0, midi.durationTicks)
+    const absoluteX = Math.max(0, container.scrollLeft - MEASURE_TIME_LEFT)
+    const measureIndex = Math.max(0, Math.floor(absoluteX / (MEASURE_WIDTH + MEASURE_GAP)))
+    const measureStartX = measureIndex * (MEASURE_WIDTH + MEASURE_GAP)
+    const localX = clamp(container.scrollLeft - measureStartX - MEASURE_TIME_LEFT, 0, MEASURE_TIME_WIDTH)
+    const tick = clamp(measureIndex * measureTicks + (localX / MEASURE_TIME_WIDTH) * measureTicks, 0, midi.durationTicks)
     const nextTime = midiTicksToSeconds(midi, tick)
     if (Math.abs(nextTime - currentTime) < 0.01) return
     onScrub(nextTime)
