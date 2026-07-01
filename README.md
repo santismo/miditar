@@ -13,7 +13,7 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Remembers the most recently loaded MIDI files in the current browser.
 - Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, instrument height, export, and visual theme.
 - GitHub folder-scanned example song menu for hosted MIDI files.
-- Separate desktop-focused page with persistent side panels and the same hosted example-song library.
+- Separate desktop URL that keeps the main app layout but gives the fretboard/piano more room on wide screens.
 - Primary and secondary MIDI track selectors, plus an optional bass track selector that defaults to off.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
 - Configurable guitar string channel maps for export and optional source-channel-based guitar display.

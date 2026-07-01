@@ -54,6 +54,7 @@ const MIN_TEMPO_BPM = 40
 const MAX_TEMPO_BPM = 240
 const TEMPO_STEP = 1
 const DEFAULT_INSTRUMENT_HEIGHT = 16
+const DESKTOP_DEFAULT_INSTRUMENT_HEIGHT = 27
 const MIN_INSTRUMENT_HEIGHT = 12
 const MAX_INSTRUMENT_HEIGHT = 30
 
@@ -67,6 +68,7 @@ type InstrumentViewMode = 'guitar' | 'piano'
 type AppVariant = 'mobile' | 'desktop'
 type AppProps = {
   variant?: AppVariant
+  desktopSizing?: boolean
 }
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 const BUILT_IN_DEMO_EXAMPLE = '__demo__'
@@ -143,7 +145,7 @@ function defaultInstrumentForViewMode(viewMode: InstrumentViewMode): PlaybackIns
   return viewMode === 'piano' ? 'sample:piano' : 'sample:guitar-acoustic'
 }
 
-function App({ variant = 'mobile' }: AppProps = {}) {
+function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
   const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<TrackSelection>(() => chooseDefaultTracks(DEMO_SONG))
@@ -157,7 +159,9 @@ function App({ variant = 'mobile' }: AppProps = {}) {
   const [stringChannelPreset, setStringChannelPreset] = useState<StringChannelPresetId>('miditar-11')
   const [stringChannelMap, setStringChannelMap] = useState<StringChannelMap>(DEFAULT_STRING_CHANNEL_MAP)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
-  const [instrumentHeight, setInstrumentHeight] = useState(DEFAULT_INSTRUMENT_HEIGHT)
+  const [instrumentHeight, setInstrumentHeight] = useState(() =>
+    desktopSizing ? DESKTOP_DEFAULT_INSTRUMENT_HEIGHT : DEFAULT_INSTRUMENT_HEIGHT,
+  )
   const [playbackInstrumentId, setPlaybackInstrumentId] =
     useState<PlaybackInstrumentId>('sample:guitar-acoustic')
   const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
@@ -1088,7 +1092,11 @@ function App({ variant = 'mobile' }: AppProps = {}) {
   }
 
   return (
-    <div className="app-shell" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
+    <div
+      className={desktopSizing ? 'app-shell app-shell-wide' : 'app-shell'}
+      onDrop={handleDrop}
+      onDragOver={(event) => event.preventDefault()}
+    >
       <header className="app-header">
         <div className="brand" aria-label="Miditar">
           <div className="brand-mark">
