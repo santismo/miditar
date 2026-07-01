@@ -338,10 +338,6 @@
   background: #080a08;
 }
 
-.app-shell-wide .main-stage {
-  grid-template-rows: minmax(190px, 28%) minmax(0, 1fr) var(--instrument-height, 27%);
-}
-
 .sheet-panel,
 .flow-panel,
 .neck-panel {
@@ -1037,33 +1033,6 @@
   .sheet-measure {
     width: 360px;
     flex-basis: 360px;
-  }
-}
-
-@media (min-width: 900px) {
-  .app-shell-wide .settings-panel {
-    width: min(430px, calc(100vw - 24px));
-  }
-
-  .app-shell-wide .sheet-pad {
-    flex-basis: min(38vw, 560px);
-  }
-
-  .app-shell-wide .flow-content {
-    margin-inline: 18px;
-  }
-
-  .app-shell-wide .neck-panel {
-    padding: 0 18px 10px;
-  }
-
-  .app-shell-wide .fret-number,
-  .app-shell-wide .string-name {
-    font-size: 14px;
-  }
-
-  .app-shell-wide .active-note text {
-    font-size: 16px;
   }
 }
 
