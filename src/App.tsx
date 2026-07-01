@@ -1,4 +1,4 @@
-import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
 import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
@@ -9,7 +9,7 @@ import { SheetView } from './components/SheetView'
 import { FRETBOARD_THEMES, type FretboardThemeId } from './components/fretboardThemes'
 import {
   loadExampleSong,
-  loadExampleSongManifest,
+  loadExampleSongs,
   type ExampleSongEntry,
 } from './lib/exampleSongs'
 import { mapNotesToFretboard } from './lib/fretboard'
@@ -23,6 +23,7 @@ import {
   type ParsedMidi,
 } from './lib/midi'
 import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
+import { pianoRangeForNotes } from './lib/pianoLayout'
 import {
   isSampleInstrument,
   playbackInstrumentLabel,
@@ -41,6 +42,9 @@ const FLOW_DENSITY_STEP = 12
 const MIN_TEMPO_BPM = 40
 const MAX_TEMPO_BPM = 240
 const TEMPO_STEP = 1
+const DEFAULT_INSTRUMENT_HEIGHT = 16
+const MIN_INSTRUMENT_HEIGHT = 12
+const MAX_INSTRUMENT_HEIGHT = 30
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -118,6 +122,10 @@ function clampFlowDensity(value: number) {
   return Math.min(MAX_FLOW_DENSITY, Math.max(MIN_FLOW_DENSITY, Math.round(value)))
 }
 
+function clampInstrumentHeight(value: number) {
+  return Math.min(MAX_INSTRUMENT_HEIGHT, Math.max(MIN_INSTRUMENT_HEIGHT, Math.round(value)))
+}
+
 function instrumentsForViewMode(viewMode: InstrumentViewMode) {
   const allowed = viewMode === 'piano' ? PIANO_INSTRUMENTS : GUITAR_INSTRUMENTS
   return PLAYBACK_INSTRUMENTS.filter((instrument) => allowed.has(instrument.id))
@@ -138,6 +146,7 @@ function App() {
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
+  const [instrumentHeight, setInstrumentHeight] = useState(DEFAULT_INSTRUMENT_HEIGHT)
   const [playbackInstrumentId, setPlaybackInstrumentId] =
     useState<PlaybackInstrumentId>('sample:guitar-acoustic')
   const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
@@ -182,6 +191,7 @@ function App() {
         .sort((a, b) => a.tick - b.tick || a.trackIndex - b.trackIndex || a.midi - b.midi),
     [selectedTracks],
   )
+  const pianoRange = useMemo(() => pianoRangeForNotes(combinedNotes), [combinedNotes])
   const virtualTrack: MidiTrack | null = selectedTracks.length
     ? {
         index: -1,
@@ -233,12 +243,16 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
-    void loadExampleSongManifest()
+    setExampleLoading(true)
+    void loadExampleSongs()
       .then((entries) => {
         if (!cancelled) setExampleSongs(entries)
       })
       .catch(() => {
         if (!cancelled) setExampleSongs([])
+      })
+      .finally(() => {
+        if (!cancelled) setExampleLoading(false)
       })
 
     void loadRecentMidiState()
@@ -568,6 +582,11 @@ function App() {
     setFlowDensity(clampFlowDensity(value))
   }
 
+  function updateInstrumentHeight(value: number) {
+    if (!Number.isFinite(value)) return
+    setInstrumentHeight(clampInstrumentHeight(value))
+  }
+
   function updateTempoBpm(value: number) {
     if (!Number.isFinite(value)) return
     if (isPlaying) pausePlayback()
@@ -635,7 +654,7 @@ function App() {
         return
       }
 
-      const entry = exampleSongs.find((item) => item.file === value)
+      const entry = exampleSongs.find((item) => item.id === value)
       if (!entry) return
       const loaded = await loadExampleSong(entry)
       const loadedFile: RecentMidiFile = {
@@ -739,7 +758,7 @@ function App() {
                 <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
                 <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
                 {exampleSongs.map((entry) => (
-                  <option key={entry.file} value={entry.file}>
+                  <option key={entry.id} value={entry.id}>
                     {entry.title}
                   </option>
                 ))}
@@ -878,6 +897,20 @@ function App() {
               <b>{flowDensity}</b>
             </label>
 
+            <label className="range-field">
+              <span>Instrument Height</span>
+              <input
+                aria-label="Instrument height"
+                type="range"
+                min={MIN_INSTRUMENT_HEIGHT}
+                max={MAX_INSTRUMENT_HEIGHT}
+                step="1"
+                value={instrumentHeight}
+                onChange={(event) => updateInstrumentHeight(Number(event.target.value))}
+              />
+              <b>{instrumentHeight}%</b>
+            </label>
+
             {instrumentViewMode === 'guitar' && (
               <label className="field">
                 <span>
@@ -903,7 +936,10 @@ function App() {
         </div>
       )}
 
-      <main className="main-stage">
+      <main
+        className="main-stage"
+        style={{ '--instrument-height': `${instrumentHeight}%` } as CSSProperties}
+      >
         <SheetView
           midi={song}
           notes={combinedNotes}
@@ -924,6 +960,7 @@ function App() {
           trackColors={trackColors}
           pixelsPerSecond={flowDensity}
           viewMode={instrumentViewMode}
+          pianoRange={pianoRange}
         />
         <section
           className="neck-panel"
@@ -932,7 +969,7 @@ function App() {
           aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
         >
           {instrumentViewMode === 'piano' ? (
-            <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} />
+            <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} range={pianoRange} />
           ) : (
             <Fretboard
               notes={combinedNotes}

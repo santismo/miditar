@@ -7,7 +7,7 @@ import {
   FRETBOARD_VIEW_WIDTH,
   fretLineX,
 } from '../lib/fretboardLayout'
-import { PIANO_KEYS, pianoKeySlot } from '../lib/pianoLayout'
+import { FULL_PIANO_RANGE, pianoKeysForRange, pianoKeySlot, type PianoRange } from '../lib/pianoLayout'
 
 type FlowViewMode = 'guitar' | 'piano'
 
@@ -22,6 +22,7 @@ type FlowViewProps = {
   trackColors?: Record<number, string>
   pixelsPerSecond?: number
   viewMode?: FlowViewMode
+  pianoRange?: PianoRange
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 168
@@ -94,6 +95,7 @@ export function FlowView({
   trackColors = {},
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
   viewMode = 'guitar',
+  pianoRange = FULL_PIANO_RANGE,
 }: FlowViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
@@ -103,6 +105,7 @@ export function FlowView({
   const marker = currentMarker(markers, currentTime)
   const contentHeight = Math.max(520, midi.duration * pixelsPerSecond)
   const maxFret = 22
+  const pianoKeys = useMemo(() => pianoKeysForRange(pianoRange), [pianoRange])
   const timelinePercent = midi.duration ? clamp(currentTime / midi.duration, 0, 1) * 100 : 0
   const measureTicks = getMeasureTicks(midi)
   const measureMarkers = useMemo(() => {
@@ -214,8 +217,12 @@ export function FlowView({
             ))}
             {viewMode === 'piano' ? (
               <div className="piano-guides" aria-hidden="true">
-                {PIANO_KEYS.filter((key) => !key.isBlack).map((key) => (
-                  <div key={key.midi} style={{ left: `${key.left}%`, width: `${key.width}%` }}>
+                {pianoKeys.map((key) => (
+                  <div
+                    key={key.midi}
+                    className={key.isBlack ? 'is-black' : 'is-white'}
+                    style={{ left: `${key.left}%`, width: `${key.width}%` }}
+                  >
                     {key.label}
                   </div>
                 ))}
@@ -258,9 +265,9 @@ export function FlowView({
               let keyKind = 'white'
 
               if (viewMode === 'piano') {
-                const slot = pianoKeySlot(note.midi)
+                const slot = pianoKeySlot(note.midi, pianoRange)
                 x = slot.left
-                width = Math.max(0.62, slot.width)
+                width = slot.width
                 keyKind = slot.isBlack ? 'black' : 'white'
               } else {
                 const placement = placements.get(note.id)
@@ -287,7 +294,7 @@ export function FlowView({
                   data-key-kind={keyKind}
                   style={{
                     left: `${x}%`,
-                    width: `max(8px, ${width}%)`,
+                    width: viewMode === 'piano' ? `${width}%` : `max(8px, ${width}%)`,
                     top: y,
                     height,
                     borderColor,

@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "examples:import": "node scripts/import-midi-examples.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },

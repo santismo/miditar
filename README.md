@@ -9,15 +9,15 @@ Live app: https://santismo.github.io/miditar/
 - Open one or more `.mid` / `.midi` files.
 - Dark mode by default.
 - Remembers the most recently loaded MIDI files in the current browser.
-- Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, export, and visual theme.
-- Manifest-driven example song menu for hosted MIDI files.
+- Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, instrument height, export, and visual theme.
+- GitHub folder-scanned example song menu for hosted MIDI files.
 - Primary, secondary, and bass MIDI track selectors for viewing one, two, or three parts on one neck.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
 - Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
-- Guitar and piano view modes. Piano mode switches the falling MIDI lanes to keyboard lanes and narrows sound choices to piano/synth.
+- Guitar and piano view modes. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and narrows sound choices to piano/synth.
 - VexFlow-rendered notation with first-measure clef/time signature, rests, noteheads, stems, 32nd-note quantization, and accidentals.
 - Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, and a playhead at the fretboard edge.
-- Live guitar fretboard with selectable visual themes, or live piano keyboard in piano mode.
+- Live guitar fretboard with selectable visual themes, or live piano keyboard in piano mode, with adjustable instrument height.
 - Mobile-friendly three-view layout: sheet strip, falling notes, and instrument view stay visible together.
 - Playback from the header with manual scrubbing from the sheet or falling-note views.
 - Safari and mobile browser install metadata with Miditar app icons matching the header logo.
@@ -51,13 +51,9 @@ Lint:
 npm run lint
 ```
 
-Import hosted example MIDI files:
+Hosted example MIDI files:
 
-```bash
-npm run examples:import -- "/path/to/authorized midi folder"
-```
-
-This copies `.mid` / `.midi` files into `public/examples/midi/` and rebuilds `public/examples/manifest.json`, which drives the in-app Load Example Song menu. Only publish MIDI files that are original, public-domain, CC0, or otherwise licensed/authorized for redistribution.
+Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branch. Miditar scans that public GitHub folder at runtime and lists the file names in the Load Example Song menu, with no importer or manifest required.
 
 ## MIDI Notes
 
