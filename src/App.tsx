@@ -1,6 +1,6 @@
 import { type CSSProperties, type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import { Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
+import { Dices, Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
@@ -701,6 +701,13 @@ function App() {
     }
   }
 
+  function chooseRandomExampleSong() {
+    if (!exampleSongs.length || exampleLoading) return
+    const entry = exampleSongs[Math.floor(Math.random() * exampleSongs.length)]
+    if (!entry) return
+    void chooseExampleSong(entry.id)
+  }
+
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     loadFiles(event.dataTransfer.files)
@@ -774,19 +781,31 @@ function App() {
                 <FileMusic size={15} />
                 Load Example Song
               </span>
-              <select
-                value=""
-                disabled={exampleLoading}
-                onChange={(event) => void chooseExampleSong(event.target.value)}
-              >
-                <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
-                <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
-                {exampleSongs.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.title}
-                  </option>
-                ))}
-              </select>
+              <div className="select-action-row">
+                <select
+                  value=""
+                  disabled={exampleLoading}
+                  onChange={(event) => void chooseExampleSong(event.target.value)}
+                >
+                  <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
+                  <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
+                  {exampleSongs.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.title}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="icon-button inline-icon-button"
+                  aria-label="Load random example song"
+                  title="Load random example song"
+                  disabled={exampleLoading || !exampleSongs.length}
+                  onClick={chooseRandomExampleSong}
+                >
+                  <Dices size={19} />
+                </button>
+              </div>
             </label>
 
             <button type="button" className="button secondary" onClick={exportMappedMidi} disabled={!virtualTrack}>
