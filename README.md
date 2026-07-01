@@ -4,6 +4,8 @@ Miditar is a browser-based MIDI fretboard trainer for chord-marked MIDI files. I
 
 Live app: https://santismo.github.io/miditar/
 
+Desktop app: https://santismo.github.io/miditar/desktop/
+
 ## Features
 
 - Open one or more `.mid` / `.midi` files.
@@ -11,6 +13,7 @@ Live app: https://santismo.github.io/miditar/
 - Remembers the most recently loaded MIDI files in the current browser.
 - Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, instrument height, export, and visual theme.
 - GitHub folder-scanned example song menu for hosted MIDI files.
+- Separate desktop-focused page with persistent side panels and the same hosted example-song library.
 - Primary and secondary MIDI track selectors, plus an optional bass track selector that defaults to off.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
 - Configurable guitar string channel maps for export and optional source-channel-based guitar display.
@@ -51,7 +54,7 @@ npm run lint
 
 Hosted example MIDI files:
 
-Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branch. Miditar scans that public GitHub folder at runtime and lists the file names in the Load Example Song menu, with no importer or manifest required.
+Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branch. The mobile and desktop pages both scan that public GitHub folder at runtime and list the file names in the Load Example Song menu, with no importer or manifest required.
 
 ## MIDI Notes
 

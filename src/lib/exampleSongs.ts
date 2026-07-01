@@ -10,6 +10,8 @@ export type ExampleSongEntry = {
 const GITHUB_REPO = 'santismo/miditar'
 const EXAMPLE_FOLDER_NAME = 'example midi songs'
 const ENCODED_EXAMPLE_FOLDER = encodeURIComponent(EXAMPLE_FOLDER_NAME)
+const JSDELIVR_FLAT_LIST_URL = `https://data.jsdelivr.com/v1/package/gh/${GITHUB_REPO}@main/flat?structure=flat`
+const JSDELIVR_RAW_BASE_URL = `https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@main`
 const EXAMPLE_SONG_DIRECTORIES = [
   `https://api.github.com/repos/${GITHUB_REPO}/contents/public/${ENCODED_EXAMPLE_FOLDER}?ref=main`,
   `https://api.github.com/repos/${GITHUB_REPO}/contents/${ENCODED_EXAMPLE_FOLDER}?ref=gh-pages`,
@@ -24,6 +26,15 @@ type GitHubContentItem = {
   size?: unknown
 }
 
+type JsDelivrFileItem = {
+  name?: unknown
+  size?: unknown
+}
+
+type JsDelivrFlatList = {
+  files?: unknown
+}
+
 function titleFromFileName(name: string) {
   return (
     name
@@ -36,6 +47,17 @@ function titleFromFileName(name: string) {
 
 function isMidiFileName(name: string) {
   return /\.(mid|midi)$/i.test(name)
+}
+
+function fileNameFromPath(path: string) {
+  return path.split('/').filter(Boolean).at(-1) || path
+}
+
+function encodePath(path: string) {
+  return path
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/')
 }
 
 async function loadGitHubDirectory(url: string): Promise<ExampleSongEntry[]> {
@@ -66,8 +88,37 @@ async function loadGitHubDirectory(url: string): Promise<ExampleSongEntry[]> {
   })
 }
 
+async function loadJsDelivrDirectory(): Promise<ExampleSongEntry[]> {
+  const response = await fetch(JSDELIVR_FLAT_LIST_URL, { cache: 'no-cache' })
+  if (!response.ok) return []
+
+  const value = (await response.json()) as JsDelivrFlatList
+  if (!Array.isArray(value.files)) return []
+
+  const publicFolderPath = `/public/${EXAMPLE_FOLDER_NAME}/`
+  return value.files.flatMap((item): ExampleSongEntry[] => {
+    if (!item || typeof item !== 'object') return []
+    const candidate = item as JsDelivrFileItem
+    if (typeof candidate.name !== 'string') return []
+    if (!candidate.name.startsWith(publicFolderPath) || !isMidiFileName(candidate.name)) return []
+
+    const fileName = fileNameFromPath(candidate.name)
+    return [
+      {
+        id: candidate.name,
+        title: titleFromFileName(fileName),
+        url: `${JSDELIVR_RAW_BASE_URL}${encodePath(candidate.name)}`,
+        size: typeof candidate.size === 'number' ? candidate.size : undefined,
+      },
+    ]
+  })
+}
+
 export async function loadExampleSongs() {
-  const directories = await Promise.all(EXAMPLE_SONG_DIRECTORIES.map((url) => loadGitHubDirectory(url)))
+  const directories = await Promise.all([
+    ...EXAMPLE_SONG_DIRECTORIES.map((url) => loadGitHubDirectory(url)),
+    loadJsDelivrDirectory(),
+  ])
   const entriesByName = new Map<string, ExampleSongEntry>()
 
   for (const entry of directories.flat()) {

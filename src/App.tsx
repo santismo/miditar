@@ -64,6 +64,10 @@ type ActiveAudioEngine =
   | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: Exclude<PlaybackInstrumentId, 'synth'> }
 type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
 type InstrumentViewMode = 'guitar' | 'piano'
+type AppVariant = 'mobile' | 'desktop'
+type AppProps = {
+  variant?: AppVariant
+}
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 const BUILT_IN_DEMO_EXAMPLE = '__demo__'
 const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
@@ -139,7 +143,7 @@ function defaultInstrumentForViewMode(viewMode: InstrumentViewMode): PlaybackIns
   return viewMode === 'piano' ? 'sample:piano' : 'sample:guitar-acoustic'
 }
 
-function App() {
+function App({ variant = 'mobile' }: AppProps = {}) {
   const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
   const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<TrackSelection>(() => chooseDefaultTracks(DEMO_SONG))
@@ -711,6 +715,376 @@ function App() {
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     loadFiles(event.dataTransfer.files)
+  }
+
+  if (variant === 'desktop') {
+    return (
+      <div className="app-shell desktop-shell" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
+        <header className="desktop-header">
+          <div className="brand" aria-label="Miditar">
+            <div className="brand-mark">
+              <Guitar size={23} strokeWidth={2.2} />
+            </div>
+            <h1>Miditar</h1>
+          </div>
+
+          <div className="desktop-song-summary">
+            <strong>{song.title}</strong>
+            {currentChord && <span>{currentChord}</span>}
+          </div>
+
+          <div className="desktop-header-actions">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".mid,.midi,audio/midi"
+              multiple
+              onChange={(event) => event.target.files && loadFiles(event.target.files)}
+            />
+            <button
+              type="button"
+              className="play-button"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              onClick={() => (isPlaying ? pausePlayback() : void playFrom())}
+            >
+              {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+            </button>
+            <button type="button" className="button secondary desktop-action-button" onClick={() => fileInputRef.current?.click()}>
+              <FolderOpen size={18} />
+              Open MIDI
+            </button>
+            <button type="button" className="button secondary desktop-action-button" onClick={exportMappedMidi} disabled={!virtualTrack}>
+              <Download size={18} />
+              Export
+            </button>
+          </div>
+        </header>
+
+        <main className="desktop-main">
+          <aside className="desktop-sidebar" aria-label="Library and playback controls">
+            <section className="desktop-control-section">
+              <h2>Library</h2>
+              <label className="field">
+                <span>
+                  <FileMusic size={15} />
+                  Load Example Song
+                </span>
+                <div className="select-action-row">
+                  <select
+                    value=""
+                    disabled={exampleLoading}
+                    onChange={(event) => void chooseExampleSong(event.target.value)}
+                  >
+                    <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
+                    <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
+                    {exampleSongs.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.title}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="icon-button inline-icon-button"
+                    aria-label="Load random example song"
+                    title="Load random example song"
+                    disabled={exampleLoading || !exampleSongs.length}
+                    onClick={chooseRandomExampleSong}
+                  >
+                    <Dices size={19} />
+                  </button>
+                </div>
+              </label>
+
+              {songs.length > 1 && (
+                <label className="field">
+                  <span>
+                    <FileMusic size={15} />
+                    Song
+                  </span>
+                  <select value={songIndex} onChange={(event) => chooseSong(Number(event.target.value))}>
+                    {songs.map((item, index) => (
+                      <option key={`${item.fileName}-${index}`} value={index}>
+                        {item.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </section>
+
+            <section className="desktop-control-section">
+              <h2>Tracks</h2>
+              <div className="track-grid">
+                {([0, 1, 2] as TrackSlot[]).map((slot) => {
+                  const selectedIndex = selectedTrackIndexes[slot]
+                  return (
+                    <label className="field" key={slot}>
+                      <span>
+                        <i className="track-dot" style={{ background: TRACK_COLORS[slot] }} />
+                        {TRACK_SLOT_LABELS[slot]}
+                      </span>
+                      <select
+                        value={selectedIndex ?? 'none'}
+                        onChange={(event) => updateTrackSlot(slot, event.target.value)}
+                      >
+                        <option value="none">None</option>
+                        {tracks.map((track) => (
+                          <option key={track.index} value={track.index}>
+                            {trackLabel(track)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section className="desktop-control-section">
+              <h2>Playback</h2>
+              <label className="field">
+                <span>View Mode</span>
+                <select
+                  value={instrumentViewMode}
+                  onChange={(event) => updateInstrumentViewMode(event.target.value as InstrumentViewMode)}
+                >
+                  <option value="guitar">Guitar Fretboard</option>
+                  <option value="piano">Piano Keyboard</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>
+                  <Guitar size={15} />
+                  Sound
+                </span>
+                <select
+                  value={playbackInstrumentId}
+                  onChange={(event) => updatePlaybackInstrument(event.target.value as PlaybackInstrumentId)}
+                >
+                  {playbackInstruments.map((instrument) => (
+                    <option key={instrument.id} value={instrument.id}>
+                      {instrument.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="range-field">
+                <span>Tempo</span>
+                <input
+                  type="range"
+                  min={MIN_TEMPO_BPM}
+                  max={MAX_TEMPO_BPM}
+                  step={TEMPO_STEP}
+                  value={tempoBpm}
+                  onChange={(event) => updateTempoBpm(Number(event.target.value))}
+                />
+                <b>{tempoBpm} bpm</b>
+              </label>
+
+              <label className="range-field">
+                <span>Speed</span>
+                <input
+                  type="range"
+                  min="0.35"
+                  max="1.5"
+                  step="0.05"
+                  value={speed}
+                  onChange={(event) => {
+                    const nextSpeed = Number(event.target.value)
+                    if (isPlaying) pausePlayback()
+                    setSpeed(nextSpeed)
+                  }}
+                />
+                <b>{speed.toFixed(2)}x</b>
+              </label>
+
+              <label className="range-field">
+                <span>MIDI Density</span>
+                <input
+                  type="range"
+                  min={MIN_FLOW_DENSITY}
+                  max={MAX_FLOW_DENSITY}
+                  step={FLOW_DENSITY_STEP}
+                  value={flowDensity}
+                  onChange={(event) => updateFlowDensity(Number(event.target.value))}
+                />
+                <b>{flowDensity}</b>
+              </label>
+            </section>
+
+            {(error || audioStatus) && (
+              <section className="desktop-control-section">
+                {error && <div className="error-text">{error}</div>}
+                {audioStatus && <div className="status-text">{audioStatus}</div>}
+              </section>
+            )}
+          </aside>
+
+          <section className="desktop-stage" aria-label="Desktop MIDI views">
+            <SheetView
+              midi={song}
+              notes={combinedNotes}
+              markers={song.markers}
+              currentTime={currentTime}
+              isPlaying={isPlaying}
+              onScrub={scrubTo}
+              trackColors={trackColors}
+            />
+            <FlowView
+              midi={song}
+              notes={combinedNotes}
+              markers={song.markers}
+              placements={notePlacements}
+              currentTime={currentTime}
+              isPlaying={isPlaying}
+              onScrub={scrubTo}
+              trackColors={trackColors}
+              pixelsPerSecond={flowDensity}
+              viewMode={instrumentViewMode}
+              pianoRange={pianoRange}
+            />
+          </section>
+
+          <aside
+            className="desktop-inspector"
+            aria-label="Instrument and guitar controls"
+            style={{ '--desktop-instrument-height': `${Math.max(26, instrumentHeight + 16)}%` } as CSSProperties}
+          >
+            <section className="desktop-instrument-panel">
+              <div className="panel-mini-header">
+                <span>{instrumentViewMode === 'piano' ? 'Piano' : 'Fretboard'}</span>
+                <strong>{currentChord || song.title}</strong>
+              </div>
+              <div
+                className="desktop-live-instrument neck-panel"
+                data-neck-theme={fretboardTheme}
+                data-view-mode={instrumentViewMode}
+                aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
+              >
+                {instrumentViewMode === 'piano' ? (
+                  <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} range={pianoRange} />
+                ) : (
+                  <Fretboard
+                    notes={combinedNotes}
+                    placements={notePlacements}
+                    currentTime={currentTime}
+                    trackColors={trackColors}
+                    themeId={fretboardTheme}
+                  />
+                )}
+              </div>
+            </section>
+
+            <section className="desktop-control-section">
+              <h2>Instrument</h2>
+              <label className="range-field">
+                <span>Height</span>
+                <input
+                  aria-label="Instrument height"
+                  type="range"
+                  min={MIN_INSTRUMENT_HEIGHT}
+                  max={MAX_INSTRUMENT_HEIGHT}
+                  step="1"
+                  value={instrumentHeight}
+                  onChange={(event) => updateInstrumentHeight(Number(event.target.value))}
+                />
+                <b>{instrumentHeight}%</b>
+              </label>
+
+              {instrumentViewMode === 'guitar' && (
+                <>
+                  <label className="toggle-field">
+                    <span>Smart Guitar Mode</span>
+                    <input
+                      type="checkbox"
+                      checked={smartGuitarMode}
+                      onChange={(event) => {
+                        stopPlayback()
+                        releaseAllScrubAudition()
+                        setSmartGuitarMode(event.target.checked)
+                      }}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>
+                      <Palette size={15} />
+                      Fretboard Theme
+                    </span>
+                    <select
+                      value={fretboardTheme}
+                      onChange={(event) => setFretboardTheme(event.target.value as FretboardThemeId)}
+                    >
+                      {FRETBOARD_THEMES.map((theme) => (
+                        <option key={theme.id} value={theme.id}>
+                          {theme.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+            </section>
+
+            {instrumentViewMode === 'guitar' && (
+              <section className="desktop-control-section">
+                <h2>String Channels</h2>
+                <label className="field">
+                  <span>Preset</span>
+                  <select
+                    value={stringChannelPreset}
+                    onChange={(event) => updateStringChannelPreset(event.target.value as StringChannelPresetId)}
+                  >
+                    {STRING_CHANNEL_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+
+                {stringChannelPreset === 'custom' && (
+                  <div className="channel-grid">
+                    {STRING_CHANNEL_STRINGS.map((string) => (
+                      <label className="field compact-field" key={string.index}>
+                        <span>{string.label}</span>
+                        <select
+                          value={stringChannelMap[string.index]}
+                          onChange={(event) => updateStringChannel(string.index, Number(event.target.value))}
+                        >
+                          {Array.from({ length: 16 }).map((_, index) => (
+                            <option key={index + 1} value={index + 1}>
+                              ch {index + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <label className="toggle-field">
+                  <span>Use MIDI Channels As Strings</span>
+                  <input
+                    type="checkbox"
+                    checked={useSourceStringChannels}
+                    onChange={(event) => {
+                      stopPlayback()
+                      releaseAllScrubAudition()
+                      setUseSourceStringChannels(event.target.checked)
+                    }}
+                  />
+                </label>
+              </section>
+            )}
+          </aside>
+        </main>
+      </div>
+    )
   }
 
   return (
