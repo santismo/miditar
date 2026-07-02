@@ -51,6 +51,11 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+function firstMeasureOffset(container: HTMLDivElement) {
+  const firstMeasure = container.querySelector<HTMLElement>('[data-measure="0"]')
+  return firstMeasure?.offsetLeft ?? container.clientWidth / 2
+}
+
 function stringY(stringIndex: number) {
   return TAB_STRING_TOP + stringIndex * TAB_STRING_GAP
 }
@@ -188,9 +193,10 @@ export function TabView({
     const localTick = currentTick - measureIndex * measureTicks
     const absoluteX =
       measureIndex * (TAB_MEASURE_WIDTH + TAB_GAP) + TAB_TIME_LEFT + (localTick / measureTicks) * TAB_TIME_WIDTH
-    if (Math.abs(container.scrollLeft - absoluteX) < 0.5) return
+    const targetLeft = firstMeasureOffset(container) + absoluteX - container.clientWidth / 2
+    if (Math.abs(container.scrollLeft - targetLeft) < 0.5) return
     programmaticScrollUntilRef.current = performance.now() + 220
-    container.scrollLeft = Math.max(0, absoluteX)
+    container.scrollLeft = Math.max(0, targetLeft)
   }, [currentTick, measureTicks])
 
   function beginUserScroll() {
@@ -211,10 +217,10 @@ export function TabView({
     if (!container || isPlaying || !userScrollRef.current || performance.now() < programmaticScrollUntilRef.current) {
       return
     }
-    const absoluteX = Math.max(0, container.scrollLeft - TAB_TIME_LEFT)
-    const measureIndex = Math.max(0, Math.floor(absoluteX / (TAB_MEASURE_WIDTH + TAB_GAP)))
+    const timelineX = Math.max(0, container.scrollLeft + container.clientWidth / 2 - firstMeasureOffset(container))
+    const measureIndex = Math.max(0, Math.floor(timelineX / (TAB_MEASURE_WIDTH + TAB_GAP)))
     const measureStartX = measureIndex * (TAB_MEASURE_WIDTH + TAB_GAP)
-    const localX = clamp(container.scrollLeft - measureStartX - TAB_TIME_LEFT, 0, TAB_TIME_WIDTH)
+    const localX = clamp(timelineX - measureStartX - TAB_TIME_LEFT, 0, TAB_TIME_WIDTH)
     const tick = clamp(measureIndex * measureTicks + (localX / TAB_TIME_WIDTH) * measureTicks, 0, midi.durationTicks)
     const nextTime = midiTicksToSeconds(midi, tick)
     if (Math.abs(nextTime - currentTime) < 0.01) return

@@ -27,8 +27,6 @@ type FlowViewProps = {
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 168
-const SMOOTH_SCROLL_FACTOR = 0.38
-const MAX_SMOOTH_SCROLL_DISTANCE = 720
 
 function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
   return Math.max(0, midi.duration - time) * pixelsPerSecond
@@ -118,10 +116,6 @@ export function FlowView({
     const delta = targetTop - container.scrollTop
     if (Math.abs(delta) < 0.5) return
     programmaticScrollUntilRef.current = performance.now() + 220
-    if (isPlaying && Math.abs(delta) < MAX_SMOOTH_SCROLL_DISTANCE) {
-      container.scrollTop = Math.max(0, container.scrollTop + delta * SMOOTH_SCROLL_FACTOR)
-      return
-    }
     container.scrollTop = Math.max(0, targetTop)
   }, [currentTime, isPlaying, midi, pixelsPerSecond])
 
