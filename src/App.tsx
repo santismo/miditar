@@ -80,6 +80,7 @@ const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
   'synth',
 ])
 const PIANO_INSTRUMENTS = new Set<PlaybackInstrumentId>(['sample:piano', 'synth'])
+const SMART_MELODY_SLOT_LABELS = ['Track 1 (Primary)', 'Track 2 (Secondary)', 'Track 3 (Bass)']
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
@@ -155,6 +156,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
+  const [smartGuitarMelody, setSmartGuitarMelody] = useState(true)
+  const [smartMelodyTrackSlot, setSmartMelodyTrackSlot] = useState<TrackSlot>(1)
   const [useSourceStringChannels, setUseSourceStringChannels] = useState(false)
   const [stringChannelPreset, setStringChannelPreset] = useState<StringChannelPresetId>('miditar-11')
   const [stringChannelMap, setStringChannelMap] = useState<StringChannelMap>(DEFAULT_STRING_CHANNEL_MAP)
@@ -224,12 +227,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     })
     return colors
   }, [selectedTrackIndexes])
+  const melodySourceSlot: TrackSlot = smartGuitarMode && smartGuitarMelody ? smartMelodyTrackSlot : 1
   const melodyTrackIndexes = useMemo(() => {
     const indexes = new Set<number>()
-    const melodyTrack = selectedTrackIndexes[1]
+    const melodyTrack = selectedTrackIndexes[melodySourceSlot]
     if (melodyTrack !== null) indexes.add(melodyTrack)
     return indexes
-  }, [selectedTrackIndexes])
+  }, [melodySourceSlot, selectedTrackIndexes])
   const bassTrackIndexes = useMemo(() => {
     const indexes = new Set<number>()
     const bassTrack = selectedTrackIndexes[2]
@@ -240,12 +244,21 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     () =>
       mapNotesToFretboard(combinedNotes, {
         smart: smartGuitarMode,
+        smartMelody: smartGuitarMode && smartGuitarMelody,
         melodyTrackIndexes,
         bassTrackIndexes,
         sourceChannelMap: stringChannelMap,
         useSourceChannels: useSourceStringChannels,
       }),
-    [bassTrackIndexes, combinedNotes, melodyTrackIndexes, smartGuitarMode, stringChannelMap, useSourceStringChannels],
+    [
+      bassTrackIndexes,
+      combinedNotes,
+      melodyTrackIndexes,
+      smartGuitarMelody,
+      smartGuitarMode,
+      stringChannelMap,
+      useSourceStringChannels,
+    ],
   )
   const currentChord = currentMarkerText(song, currentTime)
 
@@ -604,6 +617,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     setInstrumentHeight(clampInstrumentHeight(value))
   }
 
+  function updateSmartMelodyTrackSlot(value: string) {
+    const slot = Number(value)
+    if (slot !== 0 && slot !== 1 && slot !== 2) return
+    stopPlayback()
+    releaseAllScrubAudition()
+    setSmartMelodyTrackSlot(slot)
+  }
+
   function updateTempoBpm(value: number) {
     if (!Number.isFinite(value)) return
     if (isPlaying) pausePlayback()
@@ -642,6 +663,41 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       next[stringIndex] = clampMidiChannel(channel)
       return next
     })
+  }
+
+  function renderSmartMelodyControls() {
+    return (
+      <>
+        <label className="toggle-field">
+          <span>Smart Guitar Melody</span>
+          <input
+            type="checkbox"
+            checked={smartGuitarMelody}
+            disabled={!smartGuitarMode}
+            onChange={(event) => {
+              stopPlayback()
+              releaseAllScrubAudition()
+              setSmartGuitarMelody(event.target.checked)
+            }}
+          />
+        </label>
+
+        <label className="field">
+          <span>Melody Track</span>
+          <select
+            value={smartMelodyTrackSlot}
+            disabled={!smartGuitarMode || !smartGuitarMelody}
+            onChange={(event) => updateSmartMelodyTrackSlot(event.target.value)}
+          >
+            {([0, 1, 2] as TrackSlot[]).map((slot) => (
+              <option key={slot} value={slot}>
+                {SMART_MELODY_SLOT_LABELS[slot]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </>
+    )
   }
 
   function exportMappedMidi() {
@@ -1014,6 +1070,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     />
                   </label>
 
+                  {renderSmartMelodyControls()}
+
                   <label className="field">
                     <span>
                       <Palette size={15} />
@@ -1262,6 +1320,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     }}
                   />
                 </label>
+
+                {renderSmartMelodyControls()}
 
                 <label className="field">
                   <span>String Channels</span>

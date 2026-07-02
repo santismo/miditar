@@ -16,6 +16,7 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Separate desktop URL that keeps the main app layout with the earlier roomier fretboard/piano proportion.
 - Primary and secondary MIDI track selectors, plus an optional bass track selector that defaults to off.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
+- Smart Guitar Melody can protect a selected track slot as exact-pitch melody while accompaniment is octave-fit around it.
 - Configurable guitar string channel maps for export and optional source-channel-based guitar display.
 - Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
 - Guitar and piano view modes. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and uses compact stacked accidental labels.

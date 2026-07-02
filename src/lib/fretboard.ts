@@ -35,6 +35,7 @@ export function candidatesForNote(midi: number, maxFret = 24): FretCandidate[] {
 export type FretboardMapOptions = {
   maxFret?: number
   smart?: boolean
+  smartMelody?: boolean
   melodyTrackIndexes?: Set<number>
   bassTrackIndexes?: Set<number>
   sourceChannelMap?: StringChannelMap
@@ -79,10 +80,10 @@ function fitMidiToGuitar(midi: number, maxFret: number) {
 }
 
 function normalizeNote(note: MidiNote, options: RequiredSmartOptions): NormalizedNote {
-  const isBass = options.bassTrackIndexes.has(note.trackIndex)
   const isMelody = options.melodyTrackIndexes.has(note.trackIndex)
-  const role = isBass ? 'bass' : isMelody ? 'melody' : 'harmony'
-  const midi = fitMidiToGuitar(note.midi, options.maxFret)
+  const isBass = options.bassTrackIndexes.has(note.trackIndex)
+  const role = isMelody ? 'melody' : isBass ? 'bass' : 'harmony'
+  const midi = isMelody && options.smartMelody ? note.midi : fitMidiToGuitar(note.midi, options.maxFret)
   const priority = role === 'melody' ? 0 : role === 'bass' ? 1 : 2
 
   return { note, midi, role, priority }
@@ -90,6 +91,7 @@ function normalizeNote(note: MidiNote, options: RequiredSmartOptions): Normalize
 
 type RequiredSmartOptions = {
   maxFret: number
+  smartMelody: boolean
   melodyTrackIndexes: Set<number>
   bassTrackIndexes: Set<number>
   sourceChannelMap: StringChannelMap
@@ -188,23 +190,26 @@ function scoreGroup(
   )
 }
 
-function midiOptionsForNote(note: NormalizedNote, maxFret: number) {
+function midiOptionsForNote(note: NormalizedNote, options: RequiredSmartOptions) {
+  if (note.role === 'melody' && options.smartMelody) return [note.note.midi]
+
+  const maxFret = options.maxFret
   const highest = GUITAR_STRINGS[0].midi + maxFret
-  const options = new Set<number>([note.midi])
+  const midiChoices = new Set<number>([note.midi])
   const upOctaves = note.role === 'bass' ? 2 : note.role === 'harmony' ? 1 : 0
   const downOctaves = note.role === 'melody' ? 1 : note.role === 'harmony' ? 1 : 0
 
   for (let octave = 1; octave <= upOctaves; octave += 1) {
     const midi = note.midi + octave * 12
-    if (midi <= highest) options.add(midi)
+    if (midi <= highest) midiChoices.add(midi)
   }
 
   for (let octave = 1; octave <= downOctaves; octave += 1) {
     const midi = note.midi - octave * 12
-    if (midi >= LOWEST_GUITAR_MIDI) options.add(midi)
+    if (midi >= LOWEST_GUITAR_MIDI) midiChoices.add(midi)
   }
 
-  return [...options].sort((a, b) => Math.abs(a - note.note.midi) - Math.abs(b - note.note.midi))
+  return [...midiChoices].sort((a, b) => Math.abs(a - note.note.midi) - Math.abs(b - note.note.midi))
 }
 
 function scoreCandidateForNote(note: NormalizedNote, candidate: FretCandidate) {
@@ -220,9 +225,9 @@ function scoreCandidateForNote(note: NormalizedNote, candidate: FretCandidate) {
   return octaveShift * roleWeight + roleString + fretCost
 }
 
-function smartCandidatesForNote(note: NormalizedNote, maxFret: number) {
-  return midiOptionsForNote(note, maxFret)
-    .flatMap((midi) => candidatesForNote(midi, maxFret))
+function smartCandidatesForNote(note: NormalizedNote, options: RequiredSmartOptions) {
+  return midiOptionsForNote(note, options)
+    .flatMap((midi) => candidatesForNote(midi, options.maxFret))
     .sort((a, b) => scoreCandidateForNote(note, a) - scoreCandidateForNote(note, b))
     .slice(0, MAX_SMART_CANDIDATES_PER_NOTE)
 }
@@ -230,9 +235,9 @@ function smartCandidatesForNote(note: NormalizedNote, maxFret: number) {
 function chooseGroup(
   notes: NormalizedNote[],
   previousPosition: number | null,
-  maxFret: number,
+  options: RequiredSmartOptions,
 ): FretCandidate[] {
-  const candidateSets = notes.map((note) => smartCandidatesForNote(note, maxFret))
+  const candidateSets = notes.map((note) => smartCandidatesForNote(note, options))
   if (candidateSets.some((set) => set.length === 0)) return []
 
   let bestScore = Number.POSITIVE_INFINITY
@@ -288,7 +293,7 @@ function bestSmartVoicing(
   let notes = reduceSmartGroup(group, options)
 
   while (notes.length) {
-    const selected = chooseGroup(notes, previousPosition, options.maxFret)
+    const selected = chooseGroup(notes, previousPosition, options)
     if (selected.length) return { notes, selected }
 
     const melody = melodyIndex(notes)
@@ -309,6 +314,7 @@ function normalizeOptions(optionsOrMaxFret: FretboardMapOptions | number): Requi
     return {
       maxFret: optionsOrMaxFret,
       smart: true,
+      smartMelody: false,
       melodyTrackIndexes: new Set(),
       bassTrackIndexes: new Set(),
       sourceChannelMap: DEFAULT_STRING_CHANNEL_MAP,
@@ -319,6 +325,7 @@ function normalizeOptions(optionsOrMaxFret: FretboardMapOptions | number): Requi
   return {
     maxFret: optionsOrMaxFret.maxFret ?? 24,
     smart: optionsOrMaxFret.smart ?? true,
+    smartMelody: optionsOrMaxFret.smartMelody ?? false,
     melodyTrackIndexes: optionsOrMaxFret.melodyTrackIndexes ?? new Set(),
     bassTrackIndexes: optionsOrMaxFret.bassTrackIndexes ?? new Set(),
     sourceChannelMap: optionsOrMaxFret.sourceChannelMap ?? DEFAULT_STRING_CHANNEL_MAP,
