@@ -356,7 +356,7 @@ export function SheetView({
           onTouchCancel={settleUserScroll}
         >
           <div className="sheet-system">
-            <div className="sheet-pad" aria-hidden="true" />
+            <div className="sheet-pad sheet-pad-start" aria-hidden="true" />
             {measures.map((measure) => (
               <MeasureNotation
                 key={measure.index}
@@ -366,7 +366,7 @@ export function SheetView({
                 showClef={measure.index === 0}
               />
             ))}
-            <div className="sheet-pad" aria-hidden="true" />
+            <div className="sheet-pad sheet-pad-end" aria-hidden="true" />
           </div>
         </div>
         <div className="center-playhead" aria-hidden="true" />

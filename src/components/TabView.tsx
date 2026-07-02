@@ -248,7 +248,7 @@ export function TabView({
           onTouchCancel={settleUserScroll}
         >
           <div className="sheet-system">
-            <div className="sheet-pad" aria-hidden="true" />
+            <div className="sheet-pad sheet-pad-start" aria-hidden="true" />
             {measures.map((measure) => (
               <TabMeasureView
                 key={measure.index}
@@ -257,7 +257,7 @@ export function TabView({
                 trackColors={trackColors}
               />
             ))}
-            <div className="sheet-pad" aria-hidden="true" />
+            <div className="sheet-pad sheet-pad-end" aria-hidden="true" />
           </div>
         </div>
         <div className="center-playhead" aria-hidden="true" />

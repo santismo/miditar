@@ -428,6 +428,24 @@
   height: 1px;
 }
 
+.app-shell-wide .sheet-panel {
+  --notation-start-offset: 43px;
+  --notation-end-offset: 41px;
+}
+
+.app-shell-wide .tab-panel {
+  --notation-start-offset: 46px;
+  --notation-end-offset: 26px;
+}
+
+.app-shell-wide .sheet-pad-start {
+  flex-basis: max(0px, calc(50vw - var(--notation-start-offset)));
+}
+
+.app-shell-wide .sheet-pad-end {
+  flex-basis: max(0px, calc(50vw - var(--notation-end-offset)));
+}
+
 .sheet-measure {
   position: relative;
   width: 360px;
@@ -1262,8 +1280,22 @@
   min-height: 0;
 }
 
-.desktop-stage .sheet-pad {
-  flex-basis: min(50%, 520px);
+.desktop-stage .sheet-panel {
+  --notation-start-offset: 43px;
+  --notation-end-offset: 41px;
+}
+
+.desktop-stage .tab-panel {
+  --notation-start-offset: 46px;
+  --notation-end-offset: 26px;
+}
+
+.desktop-stage .sheet-pad-start {
+  flex-basis: max(0px, calc(50% - var(--notation-start-offset)));
+}
+
+.desktop-stage .sheet-pad-end {
+  flex-basis: max(0px, calc(50% - var(--notation-end-offset)));
 }
 
 .desktop-instrument-panel {
