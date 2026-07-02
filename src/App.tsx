@@ -6,6 +6,7 @@ import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
 import { PianoView } from './components/PianoView'
 import { SheetView } from './components/SheetView'
+import { TabView } from './components/TabView'
 import { FRETBOARD_THEMES, type FretboardThemeId } from './components/fretboardThemes'
 import {
   loadExampleSong,
@@ -65,6 +66,7 @@ type ActiveAudioEngine =
   | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: Exclude<PlaybackInstrumentId, 'synth'> }
 type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
 type InstrumentViewMode = 'guitar' | 'piano'
+type NotationViewMode = 'tab' | 'sheet'
 type AppVariant = 'mobile' | 'desktop'
 type AppProps = {
   variant?: AppVariant
@@ -155,8 +157,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [speed, setSpeed] = useState(1)
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
+  const [notationViewMode, setNotationViewMode] = useState<NotationViewMode>('tab')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [smartGuitarMelody, setSmartGuitarMelody] = useState(true)
+  const [chordMelodyMode, setChordMelodyMode] = useState(true)
   const [smartMelodyTrackSlot, setSmartMelodyTrackSlot] = useState<TrackSlot>(1)
   const [useSourceStringChannels, setUseSourceStringChannels] = useState(false)
   const [stringChannelPreset, setStringChannelPreset] = useState<StringChannelPresetId>('miditar-11')
@@ -245,6 +249,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       mapNotesToFretboard(combinedNotes, {
         smart: smartGuitarMode,
         smartMelody: smartGuitarMode && smartGuitarMelody,
+        chordMelody: smartGuitarMode && smartGuitarMelody && chordMelodyMode,
         melodyTrackIndexes,
         bassTrackIndexes,
         sourceChannelMap: stringChannelMap,
@@ -253,6 +258,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     [
       bassTrackIndexes,
       combinedNotes,
+      chordMelodyMode,
       melodyTrackIndexes,
       smartGuitarMelody,
       smartGuitarMode,
@@ -650,6 +656,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     setPlaybackInstrumentId(defaultInstrumentForViewMode(value))
   }
 
+  function updateNotationViewMode(value: NotationViewMode) {
+    releaseAllScrubAudition()
+    setNotationViewMode(value)
+  }
+
   function updateStringChannelPreset(value: StringChannelPresetId) {
     setStringChannelPreset(value)
     if (value === 'custom') return
@@ -682,6 +693,20 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           />
         </label>
 
+        <label className="toggle-field">
+          <span>Chord Melody Mode</span>
+          <input
+            type="checkbox"
+            checked={chordMelodyMode}
+            disabled={!smartGuitarMode || !smartGuitarMelody}
+            onChange={(event) => {
+              stopPlayback()
+              releaseAllScrubAudition()
+              setChordMelodyMode(event.target.checked)
+            }}
+          />
+        </label>
+
         <label className="field">
           <span>Melody Track</span>
           <select
@@ -697,6 +722,35 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           </select>
         </label>
       </>
+    )
+  }
+
+  function renderNotationView() {
+    if (instrumentViewMode === 'guitar' && notationViewMode === 'tab') {
+      return (
+        <TabView
+          midi={song}
+          notes={combinedNotes}
+          markers={song.markers}
+          placements={notePlacements}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onScrub={scrubTo}
+          trackColors={trackColors}
+        />
+      )
+    }
+
+    return (
+      <SheetView
+        midi={song}
+        notes={combinedNotes}
+        markers={song.markers}
+        currentTime={currentTime}
+        isPlaying={isPlaying}
+        onScrub={scrubTo}
+        trackColors={trackColors}
+      />
     )
   }
 
@@ -914,6 +968,19 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 </select>
               </label>
 
+              {instrumentViewMode === 'guitar' && (
+                <label className="field">
+                  <span>Notation</span>
+                  <select
+                    value={notationViewMode}
+                    onChange={(event) => updateNotationViewMode(event.target.value as NotationViewMode)}
+                  >
+                    <option value="tab">Guitar Tab</option>
+                    <option value="sheet">Sheet Music</option>
+                  </select>
+                </label>
+              )}
+
               <label className="field">
                 <span>
                   <Guitar size={15} />
@@ -984,15 +1051,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           </aside>
 
           <section className="desktop-stage" aria-label="Desktop MIDI views">
-            <SheetView
-              midi={song}
-              notes={combinedNotes}
-              markers={song.markers}
-              currentTime={currentTime}
-              isPlaying={isPlaying}
-              onScrub={scrubTo}
-              trackColors={trackColors}
-            />
+            {renderNotationView()}
             <FlowView
               midi={song}
               notes={combinedNotes}
@@ -1307,6 +1366,19 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             </label>
 
             {instrumentViewMode === 'guitar' && (
+              <label className="field">
+                <span>Notation</span>
+                <select
+                  value={notationViewMode}
+                  onChange={(event) => updateNotationViewMode(event.target.value as NotationViewMode)}
+                >
+                  <option value="tab">Guitar Tab</option>
+                  <option value="sheet">Sheet Music</option>
+                </select>
+              </label>
+            )}
+
+            {instrumentViewMode === 'guitar' && (
               <>
                 <label className="toggle-field">
                   <span>Smart Guitar Mode</span>
@@ -1476,15 +1548,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         className="main-stage"
         style={{ '--instrument-height': `${instrumentHeight}%` } as CSSProperties}
       >
-        <SheetView
-          midi={song}
-          notes={combinedNotes}
-          markers={song.markers}
-          currentTime={currentTime}
-          isPlaying={isPlaying}
-          onScrub={scrubTo}
-          trackColors={trackColors}
-        />
+        {renderNotationView()}
         <FlowView
           midi={song}
           notes={combinedNotes}

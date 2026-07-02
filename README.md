@@ -17,10 +17,11 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Primary and secondary MIDI track selectors, plus an optional bass track selector that defaults to off.
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
 - Smart Guitar Melody can protect a selected track slot as exact-pitch melody while accompaniment is octave-fit around it.
+- Chord Melody Mode biases guitar voicings so the selected melody sits on upper strings while accompaniment stays playable below and nearby.
 - Configurable guitar string channel maps for export and optional source-channel-based guitar display.
 - Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
-- Guitar and piano view modes. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and uses compact stacked accidental labels.
-- VexFlow-rendered notation with first-measure clef/time signature, rests, noteheads, stems, 32nd-note quantization, and accidentals.
+- Guitar and piano view modes. Guitar mode defaults to scrolling tab notation, with sheet music still selectable. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and uses compact stacked accidental labels.
+- VexFlow-rendered sheet notation with first-measure clef/time signature, rests, noteheads, stems, 32nd-note quantization, and accidentals.
 - Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, and a playhead at the fretboard edge.
 - Live guitar fretboard with selectable visual themes, or live piano keyboard in piano mode, with adjustable instrument height.
 - Mobile-friendly three-view layout: sheet strip, falling notes, and instrument view stay visible together.
@@ -59,9 +60,9 @@ Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branc
 
 ## MIDI Notes
 
-Miditar uses MIDI marker events as the source of truth for chord labels in the falling-note view, sheet view, and mapped MIDI export.
+Miditar uses MIDI marker events as the source of truth for chord labels in the falling-note view, tab or sheet view, and mapped MIDI export.
 
-The string/fret mapping is heuristic. Smart Guitar mode favors reachable chord spans, avoids duplicate strings in same-tick chords, keeps voicings in string order, allows open strings, fits out-of-range notes by octave, and biases chord placement toward the selected melody track when available.
+The string/fret mapping is heuristic. Smart Guitar mode favors reachable chord spans, avoids duplicate strings in same-tick chords, keeps voicings in string order, allows open strings, fits out-of-range notes by octave, and biases chord placement toward the selected melody track when available. Chord Melody Mode adds stronger upper-voice placement for the selected melody while nudging harmony and bass notes below it.
 
 When Use MIDI Channels As Strings is enabled, Miditar first tries to place notes on the string assigned to their source MIDI channel. Notes that do not match the selected channel map, or do not fit on that string, fall back to the normal fretboard mapping.
 
