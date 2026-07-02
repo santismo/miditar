@@ -1,5 +1,6 @@
 .app-shell {
   --header-height: 64px;
+  --instrument-edge: 10px;
   height: 100svh;
   min-height: 100svh;
   display: grid;
@@ -7,6 +8,10 @@
   overflow: hidden;
   color: #f4f1e8;
   background: #070907;
+}
+
+.app-shell-wide {
+  --instrument-edge: 0px;
 }
 
 .app-header {
@@ -524,7 +529,7 @@
 .flow-content {
   position: relative;
   min-height: 100%;
-  margin-inline: 10px;
+  margin-inline: var(--instrument-edge);
 }
 
 .falling-bar-band {
@@ -758,8 +763,8 @@
 
 .flow-fretboard-playhead {
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: var(--instrument-edge);
+  right: var(--instrument-edge);
   bottom: 0;
   z-index: 8;
   height: 26px;
@@ -782,7 +787,7 @@
 
 .neck-panel {
   overflow: hidden;
-  padding: 0 10px 6px;
+  padding: 0 var(--instrument-edge) 6px;
   background:
     linear-gradient(180deg, rgba(72, 182, 255, 0.06), rgba(72, 182, 255, 0) 52%),
     #0b0e0b;
@@ -1001,7 +1006,7 @@
   }
 
   .neck-panel {
-    padding: 0 10px 3px;
+    padding: 0 var(--instrument-edge) 3px;
   }
 
   .channel-grid {

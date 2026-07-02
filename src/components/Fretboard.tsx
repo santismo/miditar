@@ -19,6 +19,7 @@ type FretboardProps = {
   trackColors?: Record<number, string>
   maxFret?: number
   themeId?: FretboardThemeId
+  stretchToFit?: boolean
 }
 
 export function Fretboard({
@@ -28,18 +29,23 @@ export function Fretboard({
   trackColors = {},
   maxFret = 22,
   themeId = 'dark',
+  stretchToFit = false,
 }: FretboardProps) {
   const activeNotes = notes.filter(
     (note) => note.time <= currentTime + 0.03 && note.time + note.duration >= currentTime - 0.03,
   )
   const theme = getFretboardTheme(themeId)
   const gradientId = `neck-${theme.id}`
+  const neckX = stretchToFit ? 0 : 48
+  const neckWidth = stretchToFit ? FRETBOARD_VIEW_WIDTH : 1004
+  const stringX1 = stretchToFit ? 0 : FRETBOARD_LEFT - 34
+  const stringX2 = stretchToFit ? FRETBOARD_VIEW_WIDTH : FRETBOARD_VIEW_WIDTH - FRETBOARD_RIGHT
 
   return (
     <svg
       className="fretboard"
       viewBox={`0 10 ${FRETBOARD_VIEW_WIDTH} ${FRETBOARD_VIEW_HEIGHT - 10}`}
-      preserveAspectRatio="xMidYMin meet"
+      preserveAspectRatio={stretchToFit ? 'none' : 'xMidYMin meet'}
       role="img"
       aria-label="Guitar fretboard"
     >
@@ -49,7 +55,7 @@ export function Fretboard({
           <stop offset="1" stopColor={theme.neckEnd} />
         </linearGradient>
       </defs>
-      <rect x="48" y="10" width="1004" height="218" rx="8" fill={`url(#${gradientId})`} />
+      <rect x={neckX} y="10" width={neckWidth} height="218" rx="8" fill={`url(#${gradientId})`} />
       <rect x={FRETBOARD_LEFT - 7} y="16" width="12" height="205" rx="3" fill={theme.nut} />
       {Array.from({ length: maxFret + 1 }).map((_, fret) => {
         const x = fretLineX(fret, maxFret)
@@ -94,8 +100,8 @@ export function Fretboard({
         return (
           <g key={string.name}>
             <line
-              x1={FRETBOARD_LEFT - 34}
-              x2={FRETBOARD_VIEW_WIDTH - FRETBOARD_RIGHT}
+              x1={stringX1}
+              x2={stringX2}
               y1={y}
               y2={y}
               stroke={theme.string}

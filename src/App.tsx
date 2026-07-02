@@ -977,6 +977,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     currentTime={currentTime}
                     trackColors={trackColors}
                     themeId={fretboardTheme}
+                    stretchToFit
                   />
                 )}
               </div>
@@ -1452,6 +1453,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               currentTime={currentTime}
               trackColors={trackColors}
               themeId={fretboardTheme}
+              stretchToFit={desktopSizing}
             />
           )}
         </section>
