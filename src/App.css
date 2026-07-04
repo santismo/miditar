@@ -343,6 +343,10 @@
   background: #080a08;
 }
 
+.main-stage[data-flight-mode="connected"] {
+  --flight-neck-overlap: clamp(72px, 10svh, 120px);
+}
+
 .sheet-panel,
 .flow-panel,
 .neck-panel {
@@ -1010,6 +1014,10 @@
     #070907;
 }
 
+.main-stage[data-flight-mode="connected"] .rocksmith-neck-view {
+  height: calc(100% + var(--flight-neck-overlap));
+}
+
 .rocksmith-neck-view canvas {
   width: 100%;
   height: 100%;
@@ -1038,12 +1046,17 @@
   position: relative;
   z-index: 2;
   border-top: 0;
-  background:
-    linear-gradient(180deg, rgba(240, 198, 90, 0.08), rgba(72, 182, 255, 0.035) 34%, rgba(7, 9, 7, 0) 72%);
+  background: transparent;
+}
+
+.main-stage[data-flight-mode="connected"] > .neck-panel[data-flight-mode="connected"] {
+  z-index: 3;
+  transform: translateY(calc(-1 * var(--flight-neck-overlap)));
+  pointer-events: none;
 }
 
 .neck-panel[data-flight-mode="connected"] .fretboard {
-  filter: drop-shadow(0 -10px 18px rgba(240, 198, 90, 0.08)) drop-shadow(0 12px 18px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(0 -8px 14px rgba(240, 198, 90, 0.08)) drop-shadow(0 12px 18px rgba(0, 0, 0, 0.36));
 }
 
 .piano-view {

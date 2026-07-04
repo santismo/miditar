@@ -63,9 +63,17 @@ export function Fretboard({
         height="218"
         rx="8"
         fill={`url(#${gradientId})`}
-        opacity={connectedFlight ? 0.66 : 1}
+        opacity={connectedFlight ? 0.18 : 1}
       />
-      <rect x={FRETBOARD_LEFT - 7} y="16" width="12" height="205" rx="3" fill={theme.nut} />
+      <rect
+        x={FRETBOARD_LEFT - 7}
+        y="16"
+        width="12"
+        height="205"
+        rx="3"
+        fill={theme.nut}
+        opacity={connectedFlight ? 0.88 : 1}
+      />
       {Array.from({ length: maxFret + 1 }).map((_, fret) => {
         const x = fretLineX(fret, maxFret)
         const strong = [0, 3, 5, 7, 9, 12, 15, 17].includes(fret)
@@ -78,7 +86,7 @@ export function Fretboard({
               y2="216"
               stroke={fret === 0 ? theme.nut : theme.fret}
               strokeWidth={fret === 0 ? 4 : 2}
-              opacity={connectedFlight && fret > 0 ? 0.82 : 1}
+              opacity={connectedFlight && fret > 0 ? 0.9 : 1}
             />
             {fret > 0 && (
               <text

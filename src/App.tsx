@@ -1714,6 +1714,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
       <main
         className="main-stage"
+        data-flight-mode={connectedFlightMode ? 'connected' : undefined}
         style={{ '--instrument-height': `${instrumentHeight}%` } as CSSProperties}
       >
         {renderNotationView()}

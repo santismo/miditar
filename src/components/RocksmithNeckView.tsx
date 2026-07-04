@@ -31,9 +31,9 @@ type HighwayNote = {
 
 type NoteObject = {
   group: THREE.Group
-  block: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
+  head: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
+  sustain: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
   label: THREE.Sprite
-  guide: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
 }
 
 type FlightPoint = {
@@ -63,9 +63,11 @@ const VIEW_LEFT = fretScaleX(0)
 const VIEW_RIGHT = fretScaleX(FRETBOARD_VIEW_WIDTH)
 const VIEW_TOP = FAR_Y + 0.24
 const VIEW_BOTTOM = HIT_CENTER_Y - 0.34
-const NOTE_WIDTH = 0.2
-const NOTE_THICKNESS = 0.07
-const MIN_NOTE_LENGTH = 0.11
+const NOTE_HEAD_SIZE = 0.13
+const NOTE_HEAD_THICKNESS = 0.065
+const SUSTAIN_WIDTH = 0.035
+const SUSTAIN_THICKNESS = 0.032
+const MIN_SUSTAIN_LENGTH = 0.035
 const PLAYHEAD_Z = 0.06
 const FAR_Z = -0.7
 const LANE_PADDING_Y = 0.2
@@ -190,31 +192,35 @@ function createLabelSprite(text: string) {
 }
 
 function createNoteObject(note: HighwayNote) {
-  const material = new THREE.MeshStandardMaterial({
+  const headMaterial = new THREE.MeshStandardMaterial({
     color: note.color,
     emissive: new THREE.Color(note.color),
     emissiveIntensity: 0.32,
     roughness: 0.36,
     metalness: 0.04,
   })
-  const block = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material)
-  block.castShadow = false
-  block.receiveShadow = false
+  const sustainMaterial = new THREE.MeshStandardMaterial({
+    color: note.color,
+    emissive: new THREE.Color(note.color),
+    emissiveIntensity: 0.22,
+    roughness: 0.42,
+    metalness: 0.02,
+    transparent: true,
+    opacity: 0.7,
+  })
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), headMaterial)
+  head.castShadow = false
+  head.receiveShadow = false
+  const sustain = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), sustainMaterial)
+  sustain.castShadow = false
+  sustain.receiveShadow = false
 
   const label = createLabelSprite(String(note.fret))
-  const guide = createLine(
-    [
-      [0, 0, -0.04],
-      [0, 0, -0.04],
-    ],
-    note.color,
-    0.56,
-  ) as THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
   const group = new THREE.Group()
-  group.add(guide)
-  group.add(block)
+  group.add(sustain)
+  group.add(head)
   group.add(label)
-  return { group, block, label, guide }
+  return { group, head, sustain, label }
 }
 
 function createLine(
@@ -421,11 +427,11 @@ export function RocksmithNeckView({
         copyPointToVector(tail, tailVector)
         direction.subVectors(tailVector, headVector)
 
-        if (direction.length() < MIN_NOTE_LENGTH) {
+        if (direction.length() < MIN_SUSTAIN_LENGTH) {
           tail = {
-            x: head.x + pathDirection.x * MIN_NOTE_LENGTH,
-            y: head.y + pathDirection.y * MIN_NOTE_LENGTH,
-            z: head.z + pathDirection.z * MIN_NOTE_LENGTH,
+            x: head.x + pathDirection.x * MIN_SUSTAIN_LENGTH,
+            y: head.y + pathDirection.y * MIN_SUSTAIN_LENGTH,
+            z: head.z + pathDirection.z * MIN_SUSTAIN_LENGTH,
           }
           copyPointToVector(tail, tailVector)
           direction.subVectors(tailVector, headVector)
@@ -433,25 +439,30 @@ export function RocksmithNeckView({
 
         const length = direction.length()
         const visualScale = depthScale(noteStartProgress)
+        const normalizedDirection = direction.normalize()
         midpoint.addVectors(headVector, tailVector).multiplyScalar(0.5)
-        item.block.position.copy(midpoint)
-        item.block.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize())
-        item.block.scale.set(
-          Math.max(0.075, (active ? NOTE_WIDTH * 1.25 : NOTE_WIDTH) * visualScale),
+        item.sustain.position.copy(midpoint)
+        item.sustain.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normalizedDirection)
+        item.sustain.scale.set(
+          Math.max(0.018, SUSTAIN_WIDTH * visualScale),
           length,
-          NOTE_THICKNESS * (0.78 + visualScale * 0.32),
+          SUSTAIN_THICKNESS * (0.72 + visualScale * 0.28),
         )
-        item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
+        item.sustain.material.emissiveIntensity = active ? 0.38 : playing ? 0.24 : 0.18
+        item.sustain.material.opacity = active ? 0.78 : 0.62
+
+        item.head.position.copy(headVector)
+        item.head.quaternion.copy(item.sustain.quaternion)
+        item.head.scale.set(
+          Math.max(0.065, (active ? NOTE_HEAD_SIZE * 1.18 : NOTE_HEAD_SIZE) * visualScale),
+          Math.max(0.065, NOTE_HEAD_SIZE * visualScale),
+          NOTE_HEAD_THICKNESS * (0.78 + visualScale * 0.32),
+        )
+        item.head.material.emissiveIntensity = active ? 0.8 : playing ? 0.4 : 0.3
         item.label.position.set(head.x, head.y, head.z + (active ? 0.2 : 0.14))
-        item.label.scale.set(0.22 + visualScale * 0.08, 0.14 + visualScale * 0.05, 1)
+        item.label.scale.set(0.18 + visualScale * 0.06, 0.12 + visualScale * 0.04, 1)
         const labelMaterial = item.label.material as THREE.SpriteMaterial
         labelMaterial.opacity = clamp(0.3 + (1 - noteStartProgress) * 0.7, 0.3, 1)
-
-        const guidePoints = item.guide.geometry.attributes.position
-        guidePoints.setXYZ(0, tail.x, tail.y, tail.z - 0.04)
-        guidePoints.setXYZ(1, landing.x, landing.y, landing.z)
-        guidePoints.needsUpdate = true
-        item.guide.material.opacity = active ? 0.42 : 0.24
       }
 
       renderer.render(scene, camera)
