@@ -79,8 +79,8 @@ function pitchClassLabel(midi: number) {
   return noteName(midi).replace(/-?\d+$/, '')
 }
 
-function notesOverlap(a: MidiNote, b: MidiNote) {
-  return a.tick < b.endTick && b.tick < a.endTick
+function stringColorOrder(a: number, b: number) {
+  return b - a
 }
 
 export function FlowView({
@@ -126,35 +126,47 @@ export function FlowView({
     const splits = new Map<string, LaneSplit>()
     for (const group of groups.values()) {
       if (group.length <= 1) continue
-      const sorted = [...group].sort((a, b) => {
-        const aPlacement = placements.get(a.id)!
-        const bPlacement = placements.get(b.id)!
-        return a.tick - b.tick || bPlacement.stringIndex - aPlacement.stringIndex || a.midi - b.midi
-      })
-      const lanes: number[] = []
-      const laneByNote = new Map<string, number>()
 
-      for (const note of sorted) {
-        let laneIndex = lanes.findIndex((endTick) => endTick <= note.tick)
-        if (laneIndex === -1) {
-          laneIndex = lanes.length
-          lanes.push(note.endTick)
-        } else {
-          lanes[laneIndex] = note.endTick
+      let cluster: MidiNote[] = []
+      let clusterEndTick = -1
+
+      function flushCluster() {
+        if (cluster.length <= 1) return
+
+        const stringIndexes = [
+          ...new Set(
+            cluster
+              .map((note) => placements.get(note.id)?.stringIndex)
+              .filter((stringIndex): stringIndex is number => stringIndex !== undefined),
+          ),
+        ].sort(stringColorOrder)
+
+        if (stringIndexes.length <= 1) return
+
+        const laneByString = new Map(stringIndexes.map((stringIndex, index) => [stringIndex, index]))
+        for (const note of cluster) {
+          const placement = placements.get(note.id)
+          if (!placement) continue
+          splits.set(note.id, {
+            index: laneByString.get(placement.stringIndex) ?? 0,
+            count: stringIndexes.length,
+          })
         }
-        laneByNote.set(note.id, laneIndex)
       }
 
-      sorted.forEach((note) => {
-        const laneIndex = laneByNote.get(note.id) ?? 0
-        const overlapping = sorted.filter((other) => notesOverlap(note, other))
-        const laneCount =
-          Math.max(
-            laneIndex,
-            ...overlapping.map((other) => laneByNote.get(other.id) ?? 0),
-          ) + 1
-        if (laneCount > 1) splits.set(note.id, { index: laneIndex, count: laneCount })
-      })
+      for (const note of [...group].sort((a, b) => a.tick - b.tick || a.endTick - b.endTick || a.midi - b.midi)) {
+        if (!cluster.length || note.tick < clusterEndTick) {
+          cluster.push(note)
+          clusterEndTick = Math.max(clusterEndTick, note.endTick)
+          continue
+        }
+
+        flushCluster()
+        cluster = [note]
+        clusterEndTick = note.endTick
+      }
+
+      flushCluster()
     }
     return splits
   }, [displayNotes, placements])
