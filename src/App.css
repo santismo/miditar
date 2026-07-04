@@ -600,8 +600,13 @@
 }
 
 .flow-panel {
+  --flow-chord-center: 50%;
   background: #0a0d0a;
   border-bottom: 0;
+}
+
+.flow-panel[data-view-mode="guitar"] {
+  --flow-chord-center: 52.22%;
 }
 
 .flow-frame {
@@ -665,10 +670,6 @@
   pointer-events: none;
 }
 
-.flow-panel[data-view-mode="guitar"] .fret-guides {
-  display: none;
-}
-
 .fret-guides div,
 .piano-guides div {
   position: absolute;
@@ -682,7 +683,11 @@
 
 .fret-guides div {
   width: 1px;
-  background: rgba(155, 168, 146, 0.16);
+  background: rgba(178, 192, 168, 0.2);
+}
+
+.flow-panel[data-view-mode="guitar"] .fret-guides div {
+  background: linear-gradient(180deg, rgba(210, 222, 198, 0.2), rgba(210, 222, 198, 0.08));
 }
 
 .piano-guides {
@@ -734,7 +739,7 @@
 
 .falling-barline strong {
   position: absolute;
-  left: 50%;
+  left: var(--flow-chord-center);
   top: 0;
   min-width: 0;
   max-width: min(210px, 44%);
@@ -766,11 +771,9 @@
   left: 0;
   right: 0;
   z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
+  height: 1px;
   transform: translateY(-50%);
+  border-top: 1px solid rgba(240, 198, 90, 0.18);
   pointer-events: none;
 }
 
@@ -786,8 +789,12 @@
 }
 
 .falling-mid-chord strong {
+  position: absolute;
+  left: var(--flow-chord-center);
+  top: 0;
   max-width: min(210px, 44%);
   overflow: hidden;
+  transform: translate(-50%, -50%);
   color: #ffe88a;
   font-size: 15px;
   font-weight: 900;
@@ -797,13 +804,24 @@
 }
 
 .falling-mid-chord.chord-right {
-  justify-content: flex-end;
-  padding-right: 12px;
+  padding-right: 0;
+}
+
+.falling-mid-chord.chord-right strong {
+  left: auto;
+  right: 12px;
+  transform: translateY(-50%);
+  text-align: right;
 }
 
 .falling-mid-chord.chord-left {
-  justify-content: flex-start;
-  padding-left: 40px;
+  padding-left: 0;
+}
+
+.falling-mid-chord.chord-left strong {
+  left: 40px;
+  transform: translateY(-50%);
+  text-align: left;
 }
 
 .falling-note {

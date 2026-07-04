@@ -5,6 +5,7 @@ import { GUITAR_STRINGS } from '../lib/fretboard'
 import { dedupeNotesByStartPitch } from '../lib/displayNotes'
 import {
   FRETBOARD_LEFT,
+  FRETBOARD_RIGHT,
   FRETBOARD_VIEW_WIDTH,
   fretLineX,
 } from '../lib/fretboardLayout'
@@ -36,6 +37,8 @@ type LaneSplit = {
 type ChordPlacement = 'center' | 'right' | 'left'
 
 const DEFAULT_PIXELS_PER_SECOND = 168
+const GUITAR_CHORD_CENTER = ((FRETBOARD_LEFT + FRETBOARD_VIEW_WIDTH - FRETBOARD_RIGHT) / 2 / FRETBOARD_VIEW_WIDTH) * 100
+const CHORD_BLOCK_HALF_WIDTH = 15
 
 function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
   return Math.max(0, midi.duration - time) * pixelsPerSecond
@@ -163,12 +166,13 @@ export function FlowView({
     return (tick: number): ChordPlacement => {
       const activeNotes = noteOverlapAtTick(tick)
       if (!activeNotes.length) return 'center'
+      const chordCenter = viewMode === 'piano' ? 50 : GUITAR_CHORD_CENTER
 
-      const centers = activeNotes
+      const ranges = activeNotes
         .map((note) => {
           if (viewMode === 'piano') {
             const slot = pianoKeySlot(note.midi, pianoRange)
-            return slot.left + slot.width / 2
+            return { left: slot.left, right: slot.left + slot.width, center: slot.left + slot.width / 2 }
           }
 
           const placement = placements.get(note.id)
@@ -177,13 +181,19 @@ export function FlowView({
           const split = guitarLaneSplits.get(note.id)
           const splitLeft = split ? slot.left + (slot.width * split.index) / split.count : slot.left
           const splitWidth = split ? slot.width / split.count : slot.width
-          return ((splitLeft + splitWidth / 2) / FRETBOARD_VIEW_WIDTH) * 100
+          const left = (splitLeft / FRETBOARD_VIEW_WIDTH) * 100
+          const width = (splitWidth / FRETBOARD_VIEW_WIDTH) * 100
+          return { left, right: left + width, center: left + width / 2 }
         })
-        .filter((value): value is number => value !== null)
+        .filter((value): value is { left: number; right: number; center: number } => value !== null)
 
-      if (!centers.length) return 'center'
-      const averageCenter = centers.reduce((sum, center) => sum + center, 0) / centers.length
-      return averageCenter > 54 ? 'left' : 'right'
+      const blocking = ranges.filter(
+        (range) => range.right >= chordCenter - CHORD_BLOCK_HALF_WIDTH && range.left <= chordCenter + CHORD_BLOCK_HALF_WIDTH,
+      )
+      if (!blocking.length) return 'center'
+
+      const averageCenter = blocking.reduce((sum, range) => sum + range.center, 0) / blocking.length
+      return averageCenter > chordCenter ? 'left' : 'right'
     }
   }, [guitarLaneSplits, maxFret, noteOverlapAtTick, pianoRange, placements, viewMode])
   const measureMarkers = useMemo(() => {
@@ -310,9 +320,7 @@ export function FlowView({
             ) : (
               <div className="fret-guides" aria-hidden="true">
                 {Array.from({ length: maxFret + 1 }).map((_, fret) => (
-                  <div key={fret} style={{ left: `${(fretLineX(fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100}%` }}>
-                    {fret > 0 && [3, 5, 7, 9, 12, 15, 17].includes(fret) ? fret : ''}
-                  </div>
+                  <div key={fret} style={{ left: `${(fretLineX(fret, maxFret) / FRETBOARD_VIEW_WIDTH) * 100}%` }} />
                 ))}
               </div>
             )}
