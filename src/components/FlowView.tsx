@@ -113,7 +113,7 @@ export function FlowView({
   )
   const timelinePercent = midi.duration ? clamp(currentTime / midi.duration, 0, 1) * 100 : 0
   const measureTicks = getMeasureTicks(midi)
-  const guitarLaneSplits = useMemo(() => {
+  const { guitarLaneSplits, mobileClusterDuplicateLabels } = useMemo(() => {
     const groups = new Map<string, MidiNote[]>()
     for (const note of displayNotes) {
       const placement = placements.get(note.id)
@@ -124,6 +124,7 @@ export function FlowView({
     }
 
     const splits = new Map<string, LaneSplit>()
+    const duplicateLabels = new Set<string>()
     for (const group of groups.values()) {
       if (group.length <= 1) continue
 
@@ -144,6 +145,11 @@ export function FlowView({
         if (stringIndexes.length <= 1) return
 
         const laneByString = new Map(stringIndexes.map((stringIndex, index) => [stringIndex, index]))
+        const labelOwner = [...cluster].sort((a, b) => {
+          const aString = placements.get(a.id)?.stringIndex ?? -1
+          const bString = placements.get(b.id)?.stringIndex ?? -1
+          return stringColorOrder(aString, bString) || a.tick - b.tick || b.duration - a.duration
+        })[0]
         for (const note of cluster) {
           const placement = placements.get(note.id)
           if (!placement) continue
@@ -151,6 +157,7 @@ export function FlowView({
             index: laneByString.get(placement.stringIndex) ?? 0,
             count: stringIndexes.length,
           })
+          if (labelOwner && note.id !== labelOwner.id) duplicateLabels.add(note.id)
         }
       }
 
@@ -168,7 +175,7 @@ export function FlowView({
 
       flushCluster()
     }
-    return splits
+    return { guitarLaneSplits: splits, mobileClusterDuplicateLabels: duplicateLabels }
   }, [displayNotes, placements])
   const noteOverlapAtTick = useMemo(() => {
     const tolerance = Math.max(1, measureTicks / 64)
@@ -399,6 +406,9 @@ export function FlowView({
                   key={note.id}
                   className={`falling-note ${viewMode === 'piano' ? 'is-piano' : 'is-guitar'} ${active ? 'is-active' : ''}`}
                   data-key-kind={keyKind}
+                  data-mobile-cluster-label={
+                    viewMode === 'guitar' && mobileClusterDuplicateLabels.has(note.id) ? 'hidden' : 'shown'
+                  }
                   style={{
                     left: `${x}%`,
                     width: `${width}%`,

@@ -1229,6 +1229,10 @@
     min-width: 0;
   }
 
+  .falling-note.is-guitar[data-mobile-cluster-label="hidden"] > .note-label {
+    display: none;
+  }
+
   .neck-panel {
     padding: 0 var(--instrument-edge) 3px;
   }

@@ -1725,7 +1725,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           data-flight-mode={connectedFlightMode ? 'connected' : undefined}
           aria-label={liveInstrumentAriaLabel()}
         >
-          {renderLiveInstrument(desktopSizing)}
+          {renderLiveInstrument(desktopSizing || connectedFlightMode)}
         </section>
       </main>
     </div>

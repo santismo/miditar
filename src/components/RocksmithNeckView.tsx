@@ -52,25 +52,26 @@ const MAX_FRET = 22
 const NECK_LEFT = -2.35
 const NECK_RIGHT = 2.65
 const NECK_CENTER_X = (NECK_LEFT + NECK_RIGHT) / 2
-const SPAWN_X = NECK_CENTER_X
-const SPAWN_Y = 0.38
-const LOOKAHEAD_SECONDS = 4.7
-const MAX_VISIBLE_NOTES = 64
-const NEAR_TRAIL_SECONDS = 0
-const STRING_HEIGHT_STEP = 0.035
-const LANDING_CENTER_Y = -1.2
+const LOOKAHEAD_SECONDS = 3.8
+const MAX_VISIBLE_NOTES = 46
+const NEAR_TRAIL_SECONDS = 0.04
+const STRING_HEIGHT_STEP = 0.062
+const HIT_CENTER_Y = -1.2
+const FAR_Y = 0.42
+const FAR_SCALE = 0.26
 const VIEW_LEFT = fretScaleX(0)
 const VIEW_RIGHT = fretScaleX(FRETBOARD_VIEW_WIDTH)
-const VIEW_TOP = SPAWN_Y + 0.18
-const VIEW_BOTTOM = LANDING_CENTER_Y - 0.08
-const NOTE_WIDTH = 0.24
-const NOTE_THICKNESS = 0.08
-const MIN_NOTE_LENGTH = 0.16
-const SPAWN_Z = -0.55
+const VIEW_TOP = FAR_Y + 0.24
+const VIEW_BOTTOM = HIT_CENTER_Y - 0.34
+const NOTE_WIDTH = 0.2
+const NOTE_THICKNESS = 0.07
+const MIN_NOTE_LENGTH = 0.11
 const PLAYHEAD_Z = 0.06
+const FAR_Z = -0.7
+const LANE_PADDING_Y = 0.2
 
 function stringLaneY(stringIndex: number) {
-  return LANDING_CENTER_Y + (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
+  return HIT_CENTER_Y + (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -83,16 +84,11 @@ function fretScaleX(rawX: number) {
 }
 
 function fretTargetX(fret: number) {
-  if (fret <= 0) return NECK_LEFT - 0.26
-  return fretScaleX(fretboardNoteX(Math.min(fret, MAX_FRET), MAX_FRET))
+  return fretScaleX(fretboardNoteX(clamp(fret, 0, MAX_FRET), MAX_FRET))
 }
 
 function fretGuideX(fret: number) {
   return fretScaleX(fretLineX(Math.min(fret, MAX_FRET), MAX_FRET))
-}
-
-function flightProgress(time: number, currentTime: number) {
-  return clamp(1 - (time - currentTime) / LOOKAHEAD_SECONDS, 0, 1)
 }
 
 function targetPoint(note: HighwayNote): FlightPoint {
@@ -103,24 +99,33 @@ function targetPoint(note: HighwayNote): FlightPoint {
   }
 }
 
-function spawnPoint(targetX: number): FlightPoint {
-  return {
-    x: SPAWN_X + (targetX - NECK_CENTER_X) * 0.1,
-    y: SPAWN_Y,
-    z: SPAWN_Z,
-  }
+function timeDepthProgress(time: number, currentTime: number) {
+  return clamp((time - currentTime) / LOOKAHEAD_SECONDS, 0, 1)
 }
 
-function interpolatePoint(from: FlightPoint, to: FlightPoint, progress: number): FlightPoint {
+function depthScale(progress: number) {
+  return 1 - progress * (1 - FAR_SCALE)
+}
+
+function highwayPoint(targetX: number, targetY: number, progress: number): FlightPoint {
+  const scale = depthScale(progress)
   return {
-    x: from.x + (to.x - from.x) * progress,
-    y: from.y + (to.y - from.y) * progress,
-    z: from.z + (to.z - from.z) * progress,
+    x: NECK_CENTER_X + (targetX - NECK_CENTER_X) * scale,
+    y: targetY + (FAR_Y - targetY) * progress,
+    z: PLAYHEAD_Z + (FAR_Z - PLAYHEAD_Z) * progress,
   }
 }
 
 function copyPointToVector(point: FlightPoint, vector: THREE.Vector3) {
   vector.set(point.x, point.y, point.z)
+}
+
+function pointTuple(point: FlightPoint): [number, number, number] {
+  return [point.x, point.y, point.z]
+}
+
+function pushPoint(values: number[], point: FlightPoint) {
+  values.push(point.x, point.y, point.z)
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -153,23 +158,20 @@ function noteWindow(notes: HighwayNote[], currentTime: number) {
 
 function createLabelSprite(text: string) {
   const canvas = document.createElement('canvas')
-  canvas.width = 128
+  canvas.width = 96
   canvas.height = 64
   const context = canvas.getContext('2d')
   if (context) {
     context.clearRect(0, 0, canvas.width, canvas.height)
-    context.fillStyle = 'rgba(7, 9, 7, 0.82)'
-    context.beginPath()
-    if (typeof context.roundRect === 'function') context.roundRect(10, 10, 108, 44, 12)
-    else context.rect(10, 10, 108, 44)
-    context.fill()
-    context.strokeStyle = 'rgba(255, 255, 255, 0.5)'
-    context.lineWidth = 4
-    context.stroke()
+    context.shadowColor = 'rgba(0, 0, 0, 0.92)'
+    context.shadowBlur = 10
+    context.lineWidth = 7
+    context.strokeStyle = 'rgba(5, 7, 5, 0.96)'
     context.fillStyle = '#fffaf0'
-    context.font = '800 34px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+    context.font = '900 34px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
     context.textAlign = 'center'
     context.textBaseline = 'middle'
+    context.strokeText(text, canvas.width / 2, canvas.height / 2 + 1)
     context.fillText(text, canvas.width / 2, canvas.height / 2 + 1)
   }
 
@@ -183,7 +185,7 @@ function createLabelSprite(text: string) {
     depthWrite: false,
   })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(0.42, 0.24, 1)
+  sprite.scale.set(0.28, 0.18, 1)
   return sprite
 }
 
@@ -268,7 +270,7 @@ export function RocksmithNeckView({
     const host = container
 
     const scene = new THREE.Scene()
-    scene.fog = new THREE.Fog(0x070907, 7, 22)
+    scene.fog = new THREE.Fog(0x070907, 5.4, 18)
 
     const camera = new THREE.OrthographicCamera(VIEW_LEFT, VIEW_RIGHT, VIEW_TOP, VIEW_BOTTOM, 0.1, 90)
     camera.position.set(NECK_CENTER_X, -0.28, 7.4)
@@ -283,64 +285,74 @@ export function RocksmithNeckView({
     })
     renderer.setClearColor(0x070907, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    renderer.outputColorSpace = THREE.SRGBColorSpace
 
     const neckGroup = new THREE.Group()
     scene.add(neckGroup)
 
-    const deckWidth = VIEW_RIGHT - VIEW_LEFT
-    const deckCenterX = (VIEW_LEFT + VIEW_RIGHT) / 2
+    const laneTopY = stringLaneY(0) + LANE_PADDING_Y
+    const laneBottomY = stringLaneY(5) - LANE_PADDING_Y
+    const deckCorners = [
+      highwayPoint(VIEW_LEFT, laneBottomY, 0),
+      highwayPoint(VIEW_RIGHT, laneBottomY, 0),
+      highwayPoint(VIEW_RIGHT, laneTopY, 0),
+      highwayPoint(VIEW_LEFT, laneTopY, 0),
+      highwayPoint(VIEW_LEFT, laneBottomY, 1),
+      highwayPoint(VIEW_RIGHT, laneBottomY, 1),
+      highwayPoint(VIEW_RIGHT, laneTopY, 1),
+      highwayPoint(VIEW_LEFT, laneTopY, 1),
+    ]
+    const deckFaces = [
+      0, 1, 5, 0, 5, 4,
+      3, 7, 6, 3, 6, 2,
+      0, 4, 7, 0, 7, 3,
+      1, 2, 6, 1, 6, 5,
+    ]
+    const deckVertices: number[] = []
+    for (const cornerIndex of deckFaces) {
+      pushPoint(deckVertices, deckCorners[cornerIndex])
+    }
+    const deckGeometry = new THREE.BufferGeometry()
+    deckGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(deckVertices, 3),
+    )
+    deckGeometry.computeVertexNormals()
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(deckWidth, 0.96, 0.08),
+      deckGeometry,
       new THREE.MeshStandardMaterial({
         color: theme.neckStart,
         transparent: true,
-        opacity: 0.1,
+        opacity: 0.16,
         roughness: 0.84,
         metalness: 0.02,
+        side: THREE.DoubleSide,
       }),
     )
-    deck.position.set(deckCenterX, LANDING_CENTER_Y, -0.08)
     neckGroup.add(deck)
 
     for (const string of [...GUITAR_STRINGS].reverse()) {
       const y = stringLaneY(string.index)
-      const stringMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.012 + (5 - string.index) * 0.002, 0.012 + (5 - string.index) * 0.002, deckWidth, 12),
-        new THREE.MeshStandardMaterial({
-          color: string.color,
-          emissive: string.color,
-          emissiveIntensity: 0.24,
-          roughness: 0.44,
-          transparent: true,
-          opacity: 0.76,
-        }),
-      )
-      stringMesh.rotation.z = Math.PI / 2
-      stringMesh.position.set(deckCenterX, y, 0.05)
-      neckGroup.add(stringMesh)
+      const nearLeft = highwayPoint(VIEW_LEFT, y, 0)
+      const nearRight = highwayPoint(VIEW_RIGHT, y, 0)
+      const farLeft = highwayPoint(VIEW_LEFT, y, 1)
+      const farRight = highwayPoint(VIEW_RIGHT, y, 1)
 
-      const guide = createLine(
-        [
-          [VIEW_LEFT, y, 0.12],
-          [VIEW_RIGHT, y, 0.12],
-        ],
-        string.color,
-        0.24,
-      )
-      neckGroup.add(guide)
+      neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(farLeft)], string.color, 0.22))
+      neckGroup.add(createLine([pointTuple(nearRight), pointTuple(farRight)], string.color, 0.22))
+      neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(nearRight)], string.color, 0.68))
+      neckGroup.add(createLine([pointTuple(farLeft), pointTuple(farRight)], string.color, 0.18))
     }
 
     for (let fret = 0; fret <= MAX_FRET; fret += 1) {
       const x = fretGuideX(fret)
-      const line = createLine(
-        [
-          [x, LANDING_CENTER_Y - 0.48, 0.11],
-          [x, LANDING_CENTER_Y + 0.48, 0.11],
-        ],
-        '#f4f1e8',
-        fret === 0 ? 0.34 : 0.1,
-      )
-      neckGroup.add(line)
+      const nearBottom = highwayPoint(x, laneBottomY, 0)
+      const nearTop = highwayPoint(x, laneTopY, 0)
+      const farBottom = highwayPoint(x, laneBottomY, 1)
+      const farTop = highwayPoint(x, laneTopY, 1)
+      neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(farBottom)], '#f4f1e8', fret === 0 ? 0.24 : 0.07))
+      neckGroup.add(createLine([pointTuple(nearTop), pointTuple(farTop)], '#f4f1e8', fret === 0 ? 0.2 : 0.05))
+      neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(nearTop)], '#f4f1e8', fret === 0 ? 0.36 : 0.1))
     }
 
     scene.add(new THREE.HemisphereLight(0xfff2ce, 0x101410, 1.35))
@@ -390,43 +402,56 @@ export function RocksmithNeckView({
         }
 
         const landing = targetPoint(note)
-        const origin = spawnPoint(landing.x)
-        const noteStartProgress = flightProgress(note.time, now)
-        const noteEndProgress = flightProgress(note.time + note.duration, now)
-        const head = interpolatePoint(origin, landing, noteStartProgress)
-        let tail = interpolatePoint(origin, landing, noteEndProgress)
+        const noteStartProgress = timeDepthProgress(note.time, now)
+        const noteEndProgress = timeDepthProgress(note.time + note.duration, now)
+        const head = highwayPoint(landing.x, landing.y, noteStartProgress)
+        let tail = highwayPoint(landing.x, landing.y, noteEndProgress)
         const active = note.time <= now && note.time + note.duration >= now
         const headVector = new THREE.Vector3()
         const tailVector = new THREE.Vector3()
         const midpoint = new THREE.Vector3()
         const direction = new THREE.Vector3()
-        const pathDirection = new THREE.Vector3(landing.x - origin.x, landing.y - origin.y, landing.z - origin.z).normalize()
+        const futurePoint = highwayPoint(landing.x, landing.y, 1)
+        const pathDirection = new THREE.Vector3(
+          futurePoint.x - landing.x,
+          futurePoint.y - landing.y,
+          futurePoint.z - landing.z,
+        ).normalize()
         copyPointToVector(head, headVector)
         copyPointToVector(tail, tailVector)
-        direction.subVectors(headVector, tailVector)
+        direction.subVectors(tailVector, headVector)
 
         if (direction.length() < MIN_NOTE_LENGTH) {
           tail = {
-            x: head.x - pathDirection.x * MIN_NOTE_LENGTH,
-            y: head.y - pathDirection.y * MIN_NOTE_LENGTH,
-            z: head.z - pathDirection.z * MIN_NOTE_LENGTH,
+            x: head.x + pathDirection.x * MIN_NOTE_LENGTH,
+            y: head.y + pathDirection.y * MIN_NOTE_LENGTH,
+            z: head.z + pathDirection.z * MIN_NOTE_LENGTH,
           }
           copyPointToVector(tail, tailVector)
-          direction.subVectors(headVector, tailVector)
+          direction.subVectors(tailVector, headVector)
         }
 
         const length = direction.length()
+        const visualScale = depthScale(noteStartProgress)
         midpoint.addVectors(headVector, tailVector).multiplyScalar(0.5)
         item.block.position.copy(midpoint)
         item.block.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize())
-        item.block.scale.set(active ? NOTE_WIDTH * 1.22 : NOTE_WIDTH, length, NOTE_THICKNESS)
+        item.block.scale.set(
+          Math.max(0.075, (active ? NOTE_WIDTH * 1.25 : NOTE_WIDTH) * visualScale),
+          length,
+          NOTE_THICKNESS * (0.78 + visualScale * 0.32),
+        )
         item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
-        item.label.position.set(head.x, head.y, head.z + (active ? 0.24 : 0.18))
+        item.label.position.set(head.x, head.y, head.z + (active ? 0.2 : 0.14))
+        item.label.scale.set(0.22 + visualScale * 0.08, 0.14 + visualScale * 0.05, 1)
+        const labelMaterial = item.label.material as THREE.SpriteMaterial
+        labelMaterial.opacity = clamp(0.3 + (1 - noteStartProgress) * 0.7, 0.3, 1)
 
         const guidePoints = item.guide.geometry.attributes.position
-        guidePoints.setXYZ(0, tail.x, tail.y, tail.z - 0.03)
+        guidePoints.setXYZ(0, tail.x, tail.y, tail.z - 0.04)
         guidePoints.setXYZ(1, landing.x, landing.y, landing.z)
         guidePoints.needsUpdate = true
+        item.guide.material.opacity = active ? 0.42 : 0.24
       }
 
       renderer.render(scene, camera)
