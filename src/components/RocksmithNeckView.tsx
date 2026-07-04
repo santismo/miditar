@@ -45,7 +45,8 @@ type SceneState = {
 const MAX_FRET = 22
 const NECK_LEFT = -2.35
 const NECK_RIGHT = 2.65
-const SPAWN_X = NECK_RIGHT + 1.05
+const SPAWN_X = 0.15
+const SPAWN_Y = 1.38
 const LOOKAHEAD_SECONDS = 7.8
 const NEAR_TRAIL_SECONDS = 0.42
 const STRING_HEIGHT_STEP = 0.38
@@ -244,6 +245,8 @@ export function RocksmithNeckView({
       new THREE.BoxGeometry(deckWidth, 2.7, 0.08),
       new THREE.MeshStandardMaterial({
         color: theme.neckStart,
+        transparent: true,
+        opacity: 0.18,
         roughness: 0.84,
         metalness: 0.02,
       }),
@@ -272,7 +275,7 @@ export function RocksmithNeckView({
           [NECK_RIGHT + 0.34, y, 0.12],
         ],
         string.color,
-        0.32,
+        0.18,
       )
       neckGroup.add(guide)
     }
@@ -285,7 +288,7 @@ export function RocksmithNeckView({
           [x, 1.18, 0.11],
         ],
         '#f4f1e8',
-        fret === 0 ? 0.46 : 0.14,
+        fret === 0 ? 0.32 : 0.08,
       )
       neckGroup.add(line)
     }
@@ -302,11 +305,11 @@ export function RocksmithNeckView({
       const width = Math.max(1, Math.floor(rect.width))
       const height = Math.max(1, Math.floor(rect.height))
       const aspect = width / height
-      const isWide = aspect > 4.4
+      const isWide = aspect > 2.4
       renderer.setSize(width, height, false)
       camera.aspect = width / height
-      camera.fov = width < 520 ? 43 : isWide ? 29 : 36
-      camera.position.set(isWide ? 0.95 : 1.05, 0.08, isWide ? 6.2 : 7.4)
+      camera.fov = width < 520 ? 43 : isWide ? 35 : 36
+      camera.position.set(isWide ? 0.95 : 1.05, 0.08, isWide ? 4.2 : 7.4)
       camera.lookAt(0.95, 0, 0)
       camera.updateProjectionMatrix()
     }
@@ -338,20 +341,21 @@ export function RocksmithNeckView({
 
         const progress = flightProgress(note.time, now)
         const targetX = fretTargetX(note.fret)
-        const spawnX = Math.max(SPAWN_X, targetX + 1.05)
+        const spawnX = SPAWN_X + (targetX - (NECK_LEFT + NECK_RIGHT) / 2) * 0.16
         const x = spawnX + (targetX - spawnX) * progress
         const active = note.time <= now && note.time + note.duration >= now
-        const laneY = stringLaneY(note.stringIndex)
+        const targetY = stringLaneY(note.stringIndex)
+        const y = SPAWN_Y + (targetY - SPAWN_Y) * progress
         const z = active ? 0.32 : 0.2 + (1 - progress) * 0.2
 
-        item.group.position.set(x, laneY, z)
+        item.group.position.set(x, y, z)
         item.block.scale.set(active ? NOTE_WIDTH * 1.22 : NOTE_WIDTH, active ? NOTE_HEIGHT * 1.18 : NOTE_HEIGHT, NOTE_THICKNESS)
         item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
         item.label.position.set(0, 0, active ? 0.24 : 0.18)
 
         const guidePoints = item.guide.geometry.attributes.position
         guidePoints.setXYZ(0, 0, 0, -0.05)
-        guidePoints.setXYZ(1, targetX - x, 0, 0.12 - z)
+        guidePoints.setXYZ(1, targetX - x, targetY - y, 0.12 - z)
         guidePoints.needsUpdate = true
       }
 

@@ -978,16 +978,17 @@
     #0a0d0a;
 }
 
-.neck-panel[data-neck-display="rocksmith"] {
-  padding: 0;
-  background: #070907;
-}
-
 .fretboard {
   width: 100%;
   height: 100%;
   display: block;
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.42));
+}
+
+.rocksmith-flow-frame {
+  background:
+    linear-gradient(180deg, rgba(7, 9, 7, 0.12), rgba(7, 9, 7, 0.78)),
+    #070907;
 }
 
 .rocksmith-neck-view {
