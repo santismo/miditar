@@ -18,8 +18,10 @@ import {
   createDemoMidi,
   activeMarkerAtTime,
   exportGuitarMappedMidi,
+  midiTicksToSeconds,
   noteName,
   parseMidiFile,
+  secondsToTicks,
   type MidiNote,
   type MidiTrack,
   type ParsedMidi,
@@ -72,6 +74,10 @@ type AppVariant = 'mobile' | 'desktop'
 type AppProps = {
   variant?: AppVariant
   desktopSizing?: boolean
+}
+type ShortcutActions = {
+  togglePlayback: () => void
+  jumpByMeasure: (direction: -1 | 1) => void
 }
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 const BUILT_IN_DEMO_EXAMPLE = '__demo__'
@@ -135,6 +141,12 @@ function songTempoBpm(song: ParsedMidi) {
   return clampTempoBpm(firstTempo?.bpm ?? 120)
 }
 
+function measureTicksForSong(song: ParsedMidi) {
+  const signature = song.timeSignatures[0]
+  if (!signature) return song.ppq * 4
+  return song.ppq * 4 * (signature.numerator / signature.denominator)
+}
+
 function clampFlowDensity(value: number) {
   return Math.min(MAX_FLOW_DENSITY, Math.max(MIN_FLOW_DENSITY, Math.round(value)))
 }
@@ -150,6 +162,14 @@ function instrumentsForViewMode(viewMode: InstrumentViewMode) {
 
 function defaultInstrumentForViewMode(viewMode: InstrumentViewMode): PlaybackInstrumentId {
   return viewMode === 'piano' ? 'sample:piano' : 'sample:guitar-acoustic'
+}
+
+function shouldIgnoreKeyboardShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return true
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  return Boolean(target.closest('input, textarea, select, button, [role="textbox"], [contenteditable="true"]'))
 }
 
 function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
@@ -193,6 +213,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const rafRef = useRef<number | null>(null)
   const scrubAuditionRef = useRef<Map<string, ScrubVoice>>(new Map())
   const scrubReleaseTimerRef = useRef<number | null>(null)
+  const shortcutActionsRef = useRef<ShortcutActions>({
+    togglePlayback: () => undefined,
+    jumpByMeasure: () => undefined,
+  })
 
   const song = songs[songIndex] ?? songs[0]
   const sourceTempoBpm = songTempoBpm(song)
@@ -577,6 +601,58 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     setCurrentTime(nextTime)
     auditionAt(nextTime)
   }
+
+  function jumpByMeasure(direction: -1 | 1) {
+    const measureTicks = measureTicksForSong(song)
+    const currentTick = secondsToTicks(song, currentTime)
+    const nextTick = Math.min(song.durationTicks, Math.max(0, Math.round(currentTick + direction * measureTicks)))
+    const nextTime = midiTicksToSeconds(song, nextTick)
+
+    if (isPlaying) {
+      stopPlayback()
+      void playFrom(nextTime)
+      return
+    }
+
+    scrubTo(nextTime)
+  }
+
+  shortcutActionsRef.current = {
+    togglePlayback: () => {
+      if (isPlaying) pausePlayback()
+      else void playFrom()
+    },
+    jumpByMeasure,
+  }
+
+  useEffect(() => {
+    if (variant !== 'desktop' && !desktopSizing) return
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (shouldIgnoreKeyboardShortcut(event)) return
+
+      if (event.code === 'Space') {
+        event.preventDefault()
+        if (event.repeat) return
+        shortcutActionsRef.current.togglePlayback()
+        return
+      }
+
+      if (event.code === 'ArrowLeft') {
+        event.preventDefault()
+        shortcutActionsRef.current.jumpByMeasure(-1)
+        return
+      }
+
+      if (event.code === 'ArrowRight') {
+        event.preventDefault()
+        shortcutActionsRef.current.jumpByMeasure(1)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [desktopSizing, variant])
 
   async function loadFiles(fileList: FileList | File[]) {
     const files = [...fileList].filter((file) => /\.(mid|midi)$/i.test(file.name))

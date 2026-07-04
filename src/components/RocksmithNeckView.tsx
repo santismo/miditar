@@ -36,6 +36,12 @@ type NoteObject = {
   guide: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
 }
 
+type FlightPoint = {
+  x: number
+  y: number
+  z: number
+}
+
 type SceneState = {
   notes: HighwayNote[]
   currentTime: number
@@ -48,11 +54,13 @@ const NECK_RIGHT = 2.65
 const SPAWN_X = 0.15
 const SPAWN_Y = 1.38
 const LOOKAHEAD_SECONDS = 7.8
-const NEAR_TRAIL_SECONDS = 0.42
+const NEAR_TRAIL_SECONDS = 0
 const STRING_HEIGHT_STEP = 0.38
 const NOTE_WIDTH = 0.34
-const NOTE_HEIGHT = 0.2
 const NOTE_THICKNESS = 0.12
+const MIN_NOTE_LENGTH = 0.2
+const SPAWN_Z = -0.52
+const PLAYHEAD_Z = 0.28
 
 function stringLaneY(stringIndex: number) {
   return (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
@@ -78,6 +86,34 @@ function fretGuideX(fret: number) {
 
 function flightProgress(time: number, currentTime: number) {
   return clamp(1 - (time - currentTime) / LOOKAHEAD_SECONDS, 0, 1)
+}
+
+function targetPoint(note: HighwayNote): FlightPoint {
+  return {
+    x: fretTargetX(note.fret),
+    y: stringLaneY(note.stringIndex),
+    z: PLAYHEAD_Z,
+  }
+}
+
+function spawnPoint(targetX: number): FlightPoint {
+  return {
+    x: SPAWN_X + (targetX - (NECK_LEFT + NECK_RIGHT) / 2) * 0.16,
+    y: SPAWN_Y,
+    z: SPAWN_Z,
+  }
+}
+
+function interpolatePoint(from: FlightPoint, to: FlightPoint, progress: number): FlightPoint {
+  return {
+    x: from.x + (to.x - from.x) * progress,
+    y: from.y + (to.y - from.y) * progress,
+    z: from.z + (to.z - from.z) * progress,
+  }
+}
+
+function copyPointToVector(point: FlightPoint, vector: THREE.Vector3) {
+  vector.set(point.x, point.y, point.z)
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -192,6 +228,7 @@ export function RocksmithNeckView({
   themeId = 'dark',
 }: RocksmithNeckViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef<SceneState>({ notes: [], currentTime, isPlaying })
   const theme = getFretboardTheme(themeId)
   const highwayNotes = useMemo(() => {
@@ -216,7 +253,8 @@ export function RocksmithNeckView({
 
   useEffect(() => {
     const container = containerRef.current
-    if (!container) return
+    const canvas = canvasRef.current
+    if (!container || !canvas) return
     const host = container
 
     const scene = new THREE.Scene()
@@ -227,6 +265,7 @@ export function RocksmithNeckView({
     camera.lookAt(0.95, 0, 0)
 
     const renderer = new THREE.WebGLRenderer({
+      canvas,
       antialias: true,
       alpha: false,
       powerPreference: 'high-performance',
@@ -234,7 +273,6 @@ export function RocksmithNeckView({
     })
     renderer.setClearColor(0x070907, 1)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    host.appendChild(renderer.domElement)
 
     const neckGroup = new THREE.Group()
     scene.add(neckGroup)
@@ -339,23 +377,43 @@ export function RocksmithNeckView({
           scene.add(item.group)
         }
 
-        const progress = flightProgress(note.time, now)
-        const targetX = fretTargetX(note.fret)
-        const spawnX = SPAWN_X + (targetX - (NECK_LEFT + NECK_RIGHT) / 2) * 0.16
-        const x = spawnX + (targetX - spawnX) * progress
+        const landing = targetPoint(note)
+        const origin = spawnPoint(landing.x)
+        const noteStartProgress = flightProgress(note.time, now)
+        const noteEndProgress = flightProgress(note.time + note.duration, now)
+        const head = interpolatePoint(origin, landing, noteStartProgress)
+        let tail = interpolatePoint(origin, landing, noteEndProgress)
         const active = note.time <= now && note.time + note.duration >= now
-        const targetY = stringLaneY(note.stringIndex)
-        const y = SPAWN_Y + (targetY - SPAWN_Y) * progress
-        const z = active ? 0.32 : 0.2 + (1 - progress) * 0.2
+        const headVector = new THREE.Vector3()
+        const tailVector = new THREE.Vector3()
+        const midpoint = new THREE.Vector3()
+        const direction = new THREE.Vector3()
+        const pathDirection = new THREE.Vector3(landing.x - origin.x, landing.y - origin.y, landing.z - origin.z).normalize()
+        copyPointToVector(head, headVector)
+        copyPointToVector(tail, tailVector)
+        direction.subVectors(headVector, tailVector)
 
-        item.group.position.set(x, y, z)
-        item.block.scale.set(active ? NOTE_WIDTH * 1.22 : NOTE_WIDTH, active ? NOTE_HEIGHT * 1.18 : NOTE_HEIGHT, NOTE_THICKNESS)
+        if (direction.length() < MIN_NOTE_LENGTH) {
+          tail = {
+            x: head.x - pathDirection.x * MIN_NOTE_LENGTH,
+            y: head.y - pathDirection.y * MIN_NOTE_LENGTH,
+            z: head.z - pathDirection.z * MIN_NOTE_LENGTH,
+          }
+          copyPointToVector(tail, tailVector)
+          direction.subVectors(headVector, tailVector)
+        }
+
+        const length = direction.length()
+        midpoint.addVectors(headVector, tailVector).multiplyScalar(0.5)
+        item.block.position.copy(midpoint)
+        item.block.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize())
+        item.block.scale.set(active ? NOTE_WIDTH * 1.22 : NOTE_WIDTH, length, NOTE_THICKNESS)
         item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
-        item.label.position.set(0, 0, active ? 0.24 : 0.18)
+        item.label.position.set(head.x, head.y, head.z + (active ? 0.24 : 0.18))
 
         const guidePoints = item.guide.geometry.attributes.position
-        guidePoints.setXYZ(0, 0, 0, -0.05)
-        guidePoints.setXYZ(1, targetX - x, targetY - y, 0.12 - z)
+        guidePoints.setXYZ(0, tail.x, tail.y, tail.z - 0.03)
+        guidePoints.setXYZ(1, landing.x, landing.y, landing.z)
         guidePoints.needsUpdate = true
       }
 
@@ -378,12 +436,12 @@ export function RocksmithNeckView({
         if (mesh.material) disposeMaterial(mesh.material)
       })
       renderer.dispose()
-      renderer.domElement.remove()
     }
   }, [theme.id, theme.neckStart])
 
   return (
     <div className="rocksmith-neck-view" ref={containerRef} role="img" aria-label="Experimental 3D guitar note highway">
+      <canvas ref={canvasRef} aria-hidden="true" />
       {currentChord && <strong className="rocksmith-chord-label">{currentChord}</strong>}
     </div>
   )
