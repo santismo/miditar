@@ -2,6 +2,7 @@ import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef } from 'r
 import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
 import { activeMarkerAtTick, midiTicksToSeconds, noteName, secondsToTicks } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
+import { dedupeNotesByStartPitch } from '../lib/displayNotes'
 import {
   FRETBOARD_LEFT,
   FRETBOARD_VIEW_WIDTH,
@@ -24,6 +25,12 @@ type FlowViewProps = {
   pixelsPerSecond?: number
   viewMode?: FlowViewMode
   pianoRange?: PianoRange
+  melodyTrackIndexes?: Set<number>
+}
+
+type LaneSplit = {
+  index: number
+  count: number
 }
 
 const DEFAULT_PIXELS_PER_SECOND = 168
@@ -79,6 +86,7 @@ export function FlowView({
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
   viewMode = 'guitar',
   pianoRange = FULL_PIANO_RANGE,
+  melodyTrackIndexes = new Set(),
 }: FlowViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
@@ -90,8 +98,41 @@ export function FlowView({
   const contentHeight = Math.max(520, midi.duration * pixelsPerSecond)
   const maxFret = 22
   const pianoKeys = useMemo(() => pianoKeysForRange(pianoRange), [pianoRange])
+  const displayNotes = useMemo(
+    () => dedupeNotesByStartPitch(notes, melodyTrackIndexes),
+    [melodyTrackIndexes, notes],
+  )
   const timelinePercent = midi.duration ? clamp(currentTime / midi.duration, 0, 1) * 100 : 0
   const measureTicks = getMeasureTicks(midi)
+  const guitarLaneSplits = useMemo(() => {
+    const groups = new Map<string, MidiNote[]>()
+    for (const note of displayNotes) {
+      const placement = placements.get(note.id)
+      if (!placement) continue
+      const key = `${note.tick}:${placement.fret}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(note)
+    }
+
+    const splits = new Map<string, LaneSplit>()
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue
+      const sorted = [...group].sort((a, b) => {
+        const aPlacement = placements.get(a.id)!
+        const bPlacement = placements.get(b.id)!
+        return bPlacement.stringIndex - aPlacement.stringIndex || a.midi - b.midi
+      })
+      sorted.forEach((note, index) => {
+        splits.set(note.id, { index, count: sorted.length })
+      })
+    }
+    return splits
+  }, [displayNotes, placements])
+  const notesNearTick = useMemo(() => {
+    const tolerance = Math.max(1, measureTicks / 64)
+    return (tick: number) =>
+      displayNotes.some((note) => note.tick <= tick + tolerance && note.endTick >= tick - tolerance)
+  }, [displayNotes, measureTicks])
   const measureMarkers = useMemo(() => {
     const count = Math.max(1, Math.ceil(midi.durationTicks / measureTicks))
     return Array.from({ length: count }).map((_, index) => {
@@ -105,9 +146,10 @@ export function FlowView({
         lineTop: timelineTop(midi, startTime, pixelsPerSecond),
         height: Math.max(1, timelineTop(midi, startTime, pixelsPerSecond) - timelineTop(midi, endTime, pixelsPerSecond)),
         marker: activeMarkerAtTick(markers, startTick),
+        hasNotesAtLine: notesNearTick(startTick),
       }
     })
-  }, [markers, measureTicks, midi, pixelsPerSecond])
+  }, [markers, measureTicks, midi, notesNearTick, pixelsPerSecond])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -217,7 +259,11 @@ export function FlowView({
               </div>
             )}
             {measureMarkers.map((measure) => (
-              <div key={`line-${measure.index}`} className="falling-barline" style={{ top: measure.lineTop }}>
+              <div
+                key={`line-${measure.index}`}
+                className={`falling-barline ${measure.hasNotesAtLine ? 'has-midi-overlap' : ''}`}
+                style={{ top: measure.lineTop }}
+              >
                 <span>{measure.index + 1}</span>
                 {measure.marker && <strong>{measure.marker.text}</strong>}
               </div>
@@ -227,14 +273,14 @@ export function FlowView({
               .map((event) => (
                 <div
                   key={`${event.tick}-${event.text}`}
-                  className="falling-mid-chord"
+                  className={`falling-mid-chord ${notesNearTick(event.tick) ? 'has-midi-overlap' : ''}`}
                   style={{ top: timelineTop(midi, event.time, pixelsPerSecond) }}
                 >
                   <span>{measureNumberForTick(event.tick, measureTicks)}</span>
                   <strong>{event.text}</strong>
                 </div>
               ))}
-            {notes.map((note) => {
+            {displayNotes.map((note) => {
               const trackColor = trackColors[note.trackIndex]
               let x = 0
               let width = 0
@@ -254,10 +300,13 @@ export function FlowView({
                 if (!placement) return null
                 const string = GUITAR_STRINGS[placement.stringIndex]
                 const slot = fretSlot(placement, maxFret)
-                x = (slot.left / FRETBOARD_VIEW_WIDTH) * 100
-                width = Math.max(0.92, (slot.width / FRETBOARD_VIEW_WIDTH) * 100)
+                const split = guitarLaneSplits.get(note.id)
+                const splitLeft = split ? slot.left + (slot.width * split.index) / split.count : slot.left
+                const splitWidth = split ? slot.width / split.count : slot.width
+                x = (splitLeft / FRETBOARD_VIEW_WIDTH) * 100
+                width = Math.max(0.42, (splitWidth / FRETBOARD_VIEW_WIDTH) * 100)
                 borderColor = string.color
-                background = `linear-gradient(180deg, ${trackColor ?? string.color}, rgba(255,255,255,.12))`
+                background = `linear-gradient(180deg, ${string.color}, rgba(255,255,255,.12))`
                 const displayMidi = placement.midi ?? note.midi
                 title = `${note.trackName}: ${noteName(displayMidi)} on ${string.name} fret ${placement.fret}`
                 label = String(placement.fret)

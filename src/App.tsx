@@ -737,6 +737,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           isPlaying={isPlaying}
           onScrub={scrubTo}
           trackColors={trackColors}
+          melodyTrackIndexes={melodyTrackIndexes}
         />
       )
     }
@@ -750,6 +751,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         isPlaying={isPlaying}
         onScrub={scrubTo}
         trackColors={trackColors}
+        melodyTrackIndexes={melodyTrackIndexes}
       />
     )
   }
@@ -1064,6 +1066,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               pixelsPerSecond={flowDensity}
               viewMode={instrumentViewMode}
               pianoRange={pianoRange}
+              melodyTrackIndexes={melodyTrackIndexes}
             />
           </section>
 
@@ -1084,7 +1087,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
               >
                 {instrumentViewMode === 'piano' ? (
-                  <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} range={pianoRange} />
+                  <PianoView
+                    notes={combinedNotes}
+                    currentTime={currentTime}
+                    trackColors={trackColors}
+                    range={pianoRange}
+                    melodyTrackIndexes={melodyTrackIndexes}
+                  />
                 ) : (
                   <Fretboard
                     notes={combinedNotes}
@@ -1561,6 +1570,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           pixelsPerSecond={flowDensity}
           viewMode={instrumentViewMode}
           pianoRange={pianoRange}
+          melodyTrackIndexes={melodyTrackIndexes}
         />
         <section
           className="neck-panel"
@@ -1569,7 +1579,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
         >
           {instrumentViewMode === 'piano' ? (
-            <PianoView notes={combinedNotes} currentTime={currentTime} trackColors={trackColors} range={pianoRange} />
+            <PianoView
+              notes={combinedNotes}
+              currentTime={currentTime}
+              trackColors={trackColors}
+              range={pianoRange}
+              melodyTrackIndexes={melodyTrackIndexes}
+            />
           ) : (
             <Fretboard
               notes={combinedNotes}

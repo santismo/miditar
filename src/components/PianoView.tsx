@@ -1,6 +1,7 @@
 import type { MidiNote } from '../lib/midi'
 import { noteName } from '../lib/midi'
 import { FULL_PIANO_RANGE, pianoKeysForRange, type PianoRange } from '../lib/pianoLayout'
+import { preferDisplayNote } from '../lib/displayNotes'
 import { NoteGlyph } from './NoteGlyph'
 
 type PianoViewProps = {
@@ -8,9 +9,16 @@ type PianoViewProps = {
   currentTime: number
   trackColors?: Record<number, string>
   range?: PianoRange
+  melodyTrackIndexes?: Set<number>
 }
 
-export function PianoView({ notes, currentTime, trackColors = {}, range = FULL_PIANO_RANGE }: PianoViewProps) {
+export function PianoView({
+  notes,
+  currentTime,
+  trackColors = {},
+  range = FULL_PIANO_RANGE,
+  melodyTrackIndexes = new Set(),
+}: PianoViewProps) {
   const activeNotes = notes.filter(
     (note) => note.time <= currentTime + 0.03 && note.time + note.duration >= currentTime - 0.03,
   )
@@ -18,7 +26,8 @@ export function PianoView({ notes, currentTime, trackColors = {}, range = FULL_P
   const activeByMidi = new Map<number, MidiNote>()
 
   activeNotes.forEach((note) => {
-    activeByMidi.set(note.midi, note)
+    const current = activeByMidi.get(note.midi)
+    activeByMidi.set(note.midi, current ? preferDisplayNote(current, note, melodyTrackIndexes) : note)
   })
 
   function renderKey(key: (typeof keys)[number]) {

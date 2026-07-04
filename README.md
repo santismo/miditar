@@ -22,7 +22,7 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
 - Guitar and piano view modes. Guitar mode defaults to scrolling tab notation, with sheet music still selectable. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and uses compact stacked accidental labels.
 - VexFlow-rendered sheet notation with first-measure clef/time signature, rests, noteheads, stems, 32nd-note quantization, and accidentals.
-- Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, and a playhead at the fretboard edge.
+- Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, string-colored guitar notes, split same-fret lanes, and a playhead at the fretboard edge.
 - Live guitar fretboard with selectable visual themes, or live piano keyboard in piano mode, with adjustable instrument height.
 - Mobile-friendly three-view layout: sheet strip, falling notes, and instrument view stay visible together.
 - Playback from the header with tick-synced manual scrubbing from the sheet or falling-note views.
@@ -66,7 +66,7 @@ The string/fret mapping is heuristic. Smart Guitar mode favors reachable chord s
 
 When Use MIDI Channels As Strings is enabled, Miditar first tries to place notes on the string assigned to their source MIDI channel. Notes that do not match the selected channel map, or do not fit on that string, fall back to the normal fretboard mapping.
 
-Notation is quantized from MIDI timing for readable measure-level engraving. Dense overlapping MIDI passages are grouped into same-start chords where possible. It is an in-browser MIDI engraving preview, not a full MusicXML transcription engine.
+Notation and tab display are quantized from MIDI timing for readable measure-level engraving, using both even 32nd-note positions and triplet subdivisions. Dense overlapping MIDI passages are grouped into same-start chords where possible, and duplicate same-pitch/same-start notes are collapsed for display with the selected melody track preferred. It is an in-browser MIDI engraving preview, not a full MusicXML transcription engine.
 
 ## License
 

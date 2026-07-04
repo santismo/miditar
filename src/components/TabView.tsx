@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
 import { activeMarkerAtTick, midiTicksToSeconds, secondsToTicks } from '../lib/midi'
+import { dedupeNotesByStartPitch } from '../lib/displayNotes'
+import { minimumDisplayUnit, quantizeDisplayTick } from '../lib/notationQuantize'
 
 type TabViewProps = {
   midi: ParsedMidi
@@ -12,6 +14,7 @@ type TabViewProps = {
   isPlaying: boolean
   onScrub: (time: number) => void
   trackColors?: Record<number, string>
+  melodyTrackIndexes?: Set<number>
 }
 
 type TabMeasure = {
@@ -68,19 +71,33 @@ function TabMeasureView({
   measure,
   placements,
   trackColors = {},
+  melodyTrackIndexes = new Set(),
+  ppq,
 }: {
   measure: TabMeasure
   placements: Map<string, MidiPlacement>
   trackColors?: Record<number, string>
+  melodyTrackIndexes?: Set<number>
+  ppq: number
 }) {
   const measureTicks = measure.end - measure.start
   const tabNotes = useMemo(() => {
-    return measure.notes
+    return dedupeNotesByStartPitch(measure.notes, melodyTrackIndexes)
       .map((note): TabNoteRender | null => {
         const placement = placements.get(note.id)
         if (!placement) return null
-        const visibleStart = clamp(note.tick, measure.start, measure.end)
-        const visibleEnd = clamp(note.endTick, measure.start, measure.end)
+        const localStart = quantizeDisplayTick(
+          clamp(note.tick, measure.start, measure.end) - measure.start,
+          ppq,
+          measureTicks,
+        )
+        const localEnd = quantizeDisplayTick(
+          clamp(note.endTick, measure.start, measure.end) - measure.start,
+          ppq,
+          measureTicks,
+        )
+        const visibleStart = measure.start + localStart
+        const visibleEnd = measure.start + clamp(Math.max(localEnd, localStart + minimumDisplayUnit(ppq)), 0, measureTicks)
         if (visibleEnd <= visibleStart) return null
         const startX = TAB_TIME_LEFT + ((visibleStart - measure.start) / measureTicks) * TAB_TIME_WIDTH
         const endX = TAB_TIME_LEFT + ((visibleEnd - measure.start) / measureTicks) * TAB_TIME_WIDTH
@@ -97,7 +114,7 @@ function TabMeasureView({
       })
       .filter((item): item is TabNoteRender => item !== null)
       .sort((a, b) => a.placement.stringIndex - b.placement.stringIndex || a.note.tick - b.note.tick)
-  }, [measure.end, measure.notes, measure.start, measureTicks, placements, trackColors])
+  }, [measure.end, measure.notes, measure.start, measureTicks, melodyTrackIndexes, placements, ppq, trackColors])
 
   return (
     <div className="tab-measure" data-measure={measure.index}>
@@ -162,6 +179,7 @@ export function TabView({
   isPlaying,
   onScrub,
   trackColors,
+  melodyTrackIndexes,
 }: TabViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
@@ -255,6 +273,8 @@ export function TabView({
                 measure={measure}
                 placements={placements}
                 trackColors={trackColors}
+                melodyTrackIndexes={melodyTrackIndexes}
+                ppq={midi.ppq}
               />
             ))}
             <div className="sheet-pad sheet-pad-end" aria-hidden="true" />

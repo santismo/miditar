@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { MidiMarker, MidiNote, ParsedMidi } from '../lib/midi'
 import { activeMarkerAtTick, midiTicksToSeconds, secondsToTicks } from '../lib/midi'
+import { dedupeNotesByStartPitch } from '../lib/displayNotes'
+import { minimumDisplayUnit, quantizeDisplayTick } from '../lib/notationQuantize'
 
 type SheetViewProps = {
   midi: ParsedMidi
@@ -10,6 +12,7 @@ type SheetViewProps = {
   isPlaying: boolean
   onScrub: (time: number) => void
   trackColors?: Record<number, string>
+  melodyTrackIndexes?: Set<number>
 }
 
 type Measure = {
@@ -30,7 +33,6 @@ const MEASURE_HEIGHT = 188
 const MEASURE_GAP = 11
 const MEASURE_TIME_LEFT = 32
 const MEASURE_TIME_WIDTH = MEASURE_WIDTH - 62
-const THIRTY_SECOND_DIVISIONS = 8
 const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
 const FLAT_NAMES = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b']
 const MAJOR_KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#']
@@ -71,22 +73,25 @@ function firstMeasureOffset(container: HTMLDivElement) {
 }
 
 function durationToVex(ticks: number, ppq: number) {
-  const unitTicks = ppq / THIRTY_SECOND_DIVISIONS
-  const units = Math.max(1, Math.round(ticks / unitTicks))
-  const durations: { units: number; duration: VexDurationName; dots: number }[] = [
-    { units: 32, duration: 'w', dots: 0 },
-    { units: 24, duration: 'h', dots: 1 },
-    { units: 16, duration: 'h', dots: 0 },
-    { units: 12, duration: 'q', dots: 1 },
-    { units: 8, duration: 'q', dots: 0 },
-    { units: 6, duration: '8', dots: 1 },
-    { units: 4, duration: '8', dots: 0 },
-    { units: 3, duration: '16', dots: 1 },
-    { units: 2, duration: '16', dots: 0 },
-    { units: 1, duration: '32', dots: 0 },
+  const durations: { ticks: number; duration: VexDurationName; dots: number }[] = [
+    { ticks: ppq * 4, duration: 'w', dots: 0 },
+    { ticks: ppq * 3, duration: 'h', dots: 1 },
+    { ticks: ppq * 2, duration: 'h', dots: 0 },
+    { ticks: ppq * 1.5, duration: 'q', dots: 1 },
+    { ticks: ppq, duration: 'q', dots: 0 },
+    { ticks: ppq * 0.75, duration: '8', dots: 1 },
+    { ticks: ppq / 2, duration: '8', dots: 0 },
+    { ticks: ppq / 3, duration: '8', dots: 0 },
+    { ticks: ppq * 0.375, duration: '16', dots: 1 },
+    { ticks: ppq / 4, duration: '16', dots: 0 },
+    { ticks: ppq / 6, duration: '16', dots: 0 },
+    { ticks: ppq / 8, duration: '32', dots: 0 },
+    { ticks: ppq / 12, duration: '32', dots: 0 },
   ]
-  const match = durations.find((item) => units >= item.units) ?? durations[durations.length - 1]
-  return { duration: match.duration, dots: match.dots, ticks: match.units * unitTicks }
+  const match = durations.reduce((best, item) =>
+    Math.abs(item.ticks - ticks) < Math.abs(best.ticks - ticks) ? item : best,
+  )
+  return { duration: match.duration, dots: match.dots, ticks: match.ticks }
 }
 
 function vexDurationString(duration: ReturnType<typeof durationToVex>, rest = false) {
@@ -119,7 +124,8 @@ function clefForMeasure(measure: Measure): ClefName {
 
 function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, clef: ClefName, Vex: VexflowModule) {
   let remaining = ticks
-  while (remaining >= ppq / THIRTY_SECOND_DIVISIONS) {
+  const minUnit = minimumDisplayUnit(ppq)
+  while (remaining >= minUnit) {
     const duration = durationToVex(remaining, ppq)
     const rest = new Vex.StaveNote({
       clef,
@@ -132,14 +138,20 @@ function addRest(tickables: VexStaveNote[], ticks: number, ppq: number, clef: Cl
   }
 }
 
-function buildNotationNotes(measure: Measure, midi: ParsedMidi, clef: ClefName, Vex: VexflowModule) {
-  const unitTicks = midi.ppq / THIRTY_SECOND_DIVISIONS
+function buildNotationNotes(
+  measure: Measure,
+  midi: ParsedMidi,
+  clef: ClefName,
+  Vex: VexflowModule,
+  melodyTrackIndexes: Set<number>,
+) {
+  const minUnit = minimumDisplayUnit(midi.ppq)
   const preferFlats = (midi.keySignatures[0]?.sf ?? 0) < 0
   const groups = new Map<number, MidiNote[]>()
 
-  for (const note of measure.notes) {
+  for (const note of dedupeNotesByStartPitch(measure.notes, melodyTrackIndexes)) {
     const start = clamp(note.tick, measure.start, measure.end)
-    const local = Math.round((start - measure.start) / unitTicks) * unitTicks
+    const local = quantizeDisplayTick(start - measure.start, midi.ppq, measure.end - measure.start)
     if (!groups.has(local)) groups.set(local, [])
     groups.get(local)!.push(note)
   }
@@ -154,8 +166,12 @@ function buildNotationNotes(measure: Measure, midi: ParsedMidi, clef: ClefName, 
     if (start > cursor) addRest(tickables, start - cursor, midi.ppq, clef, Vex)
 
     const nextStart = starts[index + 1] ?? measure.end - measure.start
-    const groupEnd = Math.max(...group.map((note) => clamp(note.endTick, measure.start, measure.end) - measure.start))
-    const duration = durationToVex(Math.max(unitTicks, Math.min(groupEnd, nextStart) - start), midi.ppq)
+    const groupEnd = Math.max(
+      ...group.map((note) =>
+        quantizeDisplayTick(clamp(note.endTick, measure.start, measure.end) - measure.start, midi.ppq, measure.end - measure.start),
+      ),
+    )
+    const duration = durationToVex(Math.max(minUnit, Math.min(groupEnd, nextStart) - start), midi.ppq)
     const selectedNotes = [...group]
       .sort((a, b) => a.midi - b.midi || b.velocity - a.velocity)
       .filter((note, noteIndex, sorted) => sorted.findIndex((item) => item.midi === note.midi) === noteIndex)
@@ -187,11 +203,13 @@ function MeasureNotation({
   midi,
   showSignature,
   showClef,
+  melodyTrackIndexes,
 }: {
   measure: Measure
   midi: ParsedMidi
   showSignature: boolean
   showClef: boolean
+  melodyTrackIndexes: Set<number>
 }) {
   const notationRef = useRef<HTMLDivElement | null>(null)
   const signature = activeTimeSignature(midi)
@@ -224,7 +242,7 @@ function MeasureNotation({
         }
         stave.setContext(context).draw()
 
-        const tickables = buildNotationNotes(measure, midi, clef, Vex)
+        const tickables = buildNotationNotes(measure, midi, clef, Vex, melodyTrackIndexes)
         const voice = new Vex.Voice({
           numBeats: signature.numerator,
           beatValue: signature.denominator,
@@ -242,7 +260,7 @@ function MeasureNotation({
     return () => {
       cancelled = true
     }
-  }, [clef, keyName, measure, midi, showClef, showSignature, signature.denominator, signature.numerator])
+  }, [clef, keyName, measure, melodyTrackIndexes, midi, showClef, showSignature, signature.denominator, signature.numerator])
 
   return (
     <div className="sheet-measure" data-measure={measure.index}>
@@ -268,6 +286,7 @@ export function SheetView({
   currentTime,
   isPlaying,
   onScrub,
+  melodyTrackIndexes = new Set(),
 }: SheetViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const programmaticScrollUntilRef = useRef(0)
@@ -364,6 +383,7 @@ export function SheetView({
                 midi={midi}
                 showSignature={measure.index === 0}
                 showClef={measure.index === 0}
+                melodyTrackIndexes={melodyTrackIndexes}
               />
             ))}
             <div className="sheet-pad sheet-pad-end" aria-hidden="true" />

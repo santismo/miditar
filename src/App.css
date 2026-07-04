@@ -704,9 +704,7 @@
   left: 0;
   right: 0;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  height: 1px;
   transform: translateY(-50%);
   border-top: 1px solid rgba(240, 198, 90, 0.22);
   color: #8f9b87;
@@ -716,38 +714,51 @@
 }
 
 .falling-barline span {
+  position: absolute;
+  left: 4px;
+  top: 3px;
   min-width: 22px;
-  margin-left: 4px;
-  padding-top: 2px;
   color: #c8d2be;
   font-variant-numeric: tabular-nums;
 }
 
 .falling-barline strong {
+  position: absolute;
+  left: 50%;
+  top: 0;
   min-width: 0;
-  max-width: 96px;
+  max-width: min(150px, 38%);
   overflow: hidden;
-  padding: 2px 6px;
-  border: 1px solid rgba(240, 198, 90, 0.7);
-  border-radius: 5px;
-  color: #171306;
-  background: rgba(240, 198, 90, 0.92);
+  transform: translate(-50%, -50%);
+  color: #ffe88a;
+  text-shadow: 0 1px 0 #080a08, 0 0 7px rgba(8, 10, 8, 0.96), 0 0 14px rgba(240, 198, 90, 0.42);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.falling-barline.has-midi-overlap strong {
+  left: auto;
+  right: 8px;
+  transform: translateY(-50%);
+  text-align: right;
+}
+
 .falling-mid-chord {
   position: absolute;
-  left: 34px;
+  left: 0;
+  right: 0;
   z-index: 4;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   transform: translateY(-50%);
   pointer-events: none;
 }
 
 .falling-mid-chord span {
+  position: absolute;
+  left: 4px;
   width: 20px;
   color: #c8d2be;
   font-size: 11px;
@@ -757,17 +768,19 @@
 }
 
 .falling-mid-chord strong {
-  max-width: 96px;
+  max-width: min(150px, 38%);
   overflow: hidden;
-  padding: 2px 6px;
-  border: 1px solid rgba(240, 198, 90, 0.72);
-  border-radius: 5px;
-  color: #171306;
-  background: rgba(240, 198, 90, 0.92);
+  color: #ffe88a;
   font-size: 11px;
   font-weight: 820;
+  text-shadow: 0 1px 0 #080a08, 0 0 7px rgba(8, 10, 8, 0.96), 0 0 14px rgba(240, 198, 90, 0.42);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.falling-mid-chord.has-midi-overlap {
+  justify-content: flex-end;
+  padding-right: 8px;
 }
 
 .falling-note {

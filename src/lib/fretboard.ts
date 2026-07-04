@@ -16,12 +16,12 @@ export type FretCandidate = {
 }
 
 export const GUITAR_STRINGS: GuitarString[] = [
-  { index: 0, name: 'E4', midi: 64, channel: 11, color: '#d64b4b' },
-  { index: 1, name: 'B3', midi: 59, channel: 12, color: '#df8b2d' },
-  { index: 2, name: 'G3', midi: 55, channel: 13, color: '#c6a63d' },
-  { index: 3, name: 'D3', midi: 50, channel: 14, color: '#3d9d6a' },
-  { index: 4, name: 'A2', midi: 45, channel: 15, color: '#397fd1' },
-  { index: 5, name: 'E2', midi: 40, channel: 16, color: '#8358d8' },
+  { index: 0, name: 'E4', midi: 64, channel: 11, color: '#8358d8' },
+  { index: 1, name: 'B3', midi: 59, channel: 12, color: '#397fd1' },
+  { index: 2, name: 'G3', midi: 55, channel: 13, color: '#3d9d6a' },
+  { index: 3, name: 'D3', midi: 50, channel: 14, color: '#c6a63d' },
+  { index: 4, name: 'A2', midi: 45, channel: 15, color: '#df8b2d' },
+  { index: 5, name: 'E2', midi: 40, channel: 16, color: '#d64b4b' },
 ]
 
 export function candidatesForNote(midi: number, maxFret = 24): FretCandidate[] {
@@ -170,7 +170,16 @@ function scoreGroup(
   const melodyPlacement = melody === null ? null : placements[melody]
   const movement = previousPosition === null ? Math.abs(center - 5) * 0.25 : Math.abs(center - previousPosition)
   const highFretPenalty = frets.reduce((sum, fret) => sum + Math.max(0, fret - 12) * 0.45, 0)
-  const openPenalty = frets.filter((fret) => fret === 0).length * 0.06
+  const openPenalty = placements.reduce((sum, placement, index) => {
+    if (placement.fret !== 0) return sum
+    const note = notes[index]
+    if (!options.chordMelody) return sum + 0.06
+    const lowerVoiceOpen = note.role === 'bass' || placement.stringIndex >= 3
+    const positionPenalty = center > 5 ? (center - 5) * 0.55 : 0
+    const upperVoicePenalty = lowerVoiceOpen ? 0.18 : 3.4
+    const melodyPenalty = note.role === 'melody' ? 6 : 0
+    return sum + upperVoicePenalty + positionPenalty + melodyPenalty
+  }, 0)
   const stringSpread = Math.max(...strings) - Math.min(...strings)
   const octaveShiftPenalty = placements.reduce((sum, placement, index) => {
     const note = notes[index]
@@ -202,7 +211,7 @@ function scoreGroup(
 
   return (
     movement * 1.25 +
-    span * 1.1 +
+    span * (options.chordMelody ? 1.45 : 1.1) +
     highFretPenalty +
     openPenalty +
     stringSpread * 0.12 +
