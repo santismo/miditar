@@ -26,7 +26,6 @@ export function Fretboard({
   notes,
   placements,
   currentTime,
-  trackColors = {},
   maxFret = 22,
   themeId = 'dark',
   stretchToFit = false,
@@ -126,11 +125,10 @@ export function Fretboard({
         if (!placement) return null
         const point = fretboardPoint(placement, maxFret)
         const string = GUITAR_STRINGS[placement.stringIndex]
-        const trackColor = trackColors[note.trackIndex] ?? string.color
         return (
           <g key={note.id} className="active-note">
-            <circle cx={point.x} cy={point.y} r="18" fill={trackColor} stroke={string.color} strokeWidth="4" />
-            <circle cx={point.x} cy={point.y} r="24" fill={trackColor} opacity="0.22" />
+            <circle cx={point.x} cy={point.y} r="18" fill={string.color} stroke={string.color} strokeWidth="4" />
+            <circle cx={point.x} cy={point.y} r="24" fill={string.color} opacity="0.22" />
             <text x={point.x} y={point.y + 5} textAnchor="middle">
               {placement.fret}
             </text>
