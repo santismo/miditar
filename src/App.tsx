@@ -52,7 +52,7 @@ const MAX_SCRUB_AUDITION_NOTES = 12
 const DEFAULT_FLOW_DENSITY = 168
 const MIN_FLOW_DENSITY = 88
 const MAX_FLOW_DENSITY = 320
-const FLOW_DENSITY_STEP = 12
+const FLOW_DENSITY_STEP = 4
 const MIN_TEMPO_BPM = 40
 const MAX_TEMPO_BPM = 240
 const TEMPO_STEP = 1
@@ -851,7 +851,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               notes={combinedNotes}
               placements={notePlacements}
               currentTime={currentTime}
+              duration={song.duration}
               isPlaying={isPlaying}
+              onScrub={scrubTo}
+              density={flowDensity}
               currentChord={currentChord}
               themeId={fretboardTheme}
             />

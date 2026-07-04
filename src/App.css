@@ -1008,10 +1008,18 @@
   width: 100%;
   height: calc(100% + 48px);
   overflow: hidden;
+  cursor: grab;
+  overscroll-behavior: contain;
+  touch-action: none;
+  user-select: none;
   background:
     radial-gradient(ellipse at 50% 100%, rgba(240, 198, 90, 0.16), transparent 38%),
     linear-gradient(180deg, rgba(123, 216, 143, 0.05), rgba(72, 182, 255, 0.025) 52%, rgba(7, 9, 7, 0.02)),
     #070907;
+}
+
+.rocksmith-neck-view:active {
+  cursor: grabbing;
 }
 
 .main-stage[data-flight-mode="connected"] .rocksmith-neck-view {
@@ -1039,6 +1047,18 @@
   text-shadow: 0 1px 0 #070907, 0 0 10px rgba(7, 9, 7, 0.96), 0 0 16px rgba(240, 198, 90, 0.52);
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.rocksmith-webgl-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(244, 241, 232, 0.82);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0;
   pointer-events: none;
 }
 

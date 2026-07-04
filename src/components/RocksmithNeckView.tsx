@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { type PointerEvent, type WheelEvent, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { MidiNote, MidiPlacement } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import {
   FRETBOARD_LEFT,
   FRETBOARD_RIGHT,
+  FRETBOARD_VIEW_HEIGHT,
   FRETBOARD_VIEW_WIDTH,
   fretLineX,
   fretboardNoteX,
+  stringY,
 } from '../lib/fretboardLayout'
 import { getFretboardTheme, type FretboardThemeId } from './fretboardThemes'
 
@@ -15,7 +17,10 @@ type RocksmithNeckViewProps = {
   notes: MidiNote[]
   placements: Map<string, MidiPlacement>
   currentTime: number
+  duration: number
   isPlaying: boolean
+  onScrub: (time: number) => void
+  density?: number
   currentChord?: string
   themeId?: FretboardThemeId
 }
@@ -48,12 +53,37 @@ type SceneState = {
   isPlaying: boolean
 }
 
+type LandingMetrics = {
+  canvasLeft: number
+  canvasTop: number
+  canvasWidth: number
+  canvasHeight: number
+  fretboardLeft: number
+  fretboardTop: number
+  fretboardWidth: number
+  fretboardHeight: number
+}
+
+type ScrubState = {
+  active: boolean
+  pointerId: number
+  startY: number
+  startTime: number
+  pendingTime: number | null
+  frame: number | null
+}
+
 const MAX_FRET = 22
 const NECK_LEFT = -2.35
 const NECK_RIGHT = 2.65
 const NECK_CENTER_X = (NECK_LEFT + NECK_RIGHT) / 2
-const LOOKAHEAD_SECONDS = 3.8
-const MAX_VISIBLE_NOTES = 46
+const DEFAULT_3D_DENSITY = 168
+const MIN_3D_DENSITY = 88
+const MAX_3D_DENSITY = 320
+const MIN_LOOKAHEAD_SECONDS = 2.1
+const MAX_LOOKAHEAD_SECONDS = 4.8
+const MIN_VISIBLE_NOTE_COUNT = 26
+const MAX_VISIBLE_NOTE_COUNT = 62
 const NEAR_TRAIL_SECONDS = 0.04
 const STRING_HEIGHT_STEP = 0.062
 const HIT_CENTER_Y = -1.2
@@ -71,8 +101,10 @@ const MIN_SUSTAIN_LENGTH = 0.035
 const PLAYHEAD_Z = 0.06
 const FAR_Z = -0.7
 const LANE_PADDING_Y = 0.2
+const FRETBOARD_VIEW_TOP = 10
+const FRETBOARD_VISIBLE_HEIGHT = FRETBOARD_VIEW_HEIGHT - FRETBOARD_VIEW_TOP
 
-function stringLaneY(stringIndex: number) {
+function fallbackStringLaneY(stringIndex: number) {
   return HIT_CENTER_Y + (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
 }
 
@@ -85,34 +117,76 @@ function fretScaleX(rawX: number) {
   return NECK_LEFT + normalized * (NECK_RIGHT - NECK_LEFT)
 }
 
-function fretTargetX(fret: number) {
-  return fretScaleX(fretboardNoteX(clamp(fret, 0, MAX_FRET), MAX_FRET))
+function rawXToWorld(rawX: number, metrics: LandingMetrics | null) {
+  if (!metrics) return fretScaleX(rawX)
+  const screenX = metrics.fretboardLeft + (rawX / FRETBOARD_VIEW_WIDTH) * metrics.fretboardWidth
+  const normalized = clamp((screenX - metrics.canvasLeft) / metrics.canvasWidth, 0, 1)
+  return VIEW_LEFT + normalized * (VIEW_RIGHT - VIEW_LEFT)
 }
 
-function fretGuideX(fret: number) {
-  return fretScaleX(fretLineX(Math.min(fret, MAX_FRET), MAX_FRET))
+function rawYToWorld(rawY: number, metrics: LandingMetrics | null) {
+  if (!metrics) {
+    const stringIndex = Math.round((rawY - 34) / 34)
+    return fallbackStringLaneY(clamp(stringIndex, 0, 5))
+  }
+  const screenY =
+    metrics.fretboardTop + ((rawY - FRETBOARD_VIEW_TOP) / FRETBOARD_VISIBLE_HEIGHT) * metrics.fretboardHeight
+  const normalized = clamp((screenY - metrics.canvasTop) / metrics.canvasHeight, 0, 1)
+  return VIEW_TOP - normalized * (VIEW_TOP - VIEW_BOTTOM)
 }
 
-function targetPoint(note: HighwayNote): FlightPoint {
+function stringLaneY(stringIndex: number, metrics: LandingMetrics | null) {
+  return rawYToWorld(stringY(stringIndex), metrics)
+}
+
+function fretTargetX(fret: number, metrics: LandingMetrics | null) {
+  return rawXToWorld(fretboardNoteX(clamp(fret, 0, MAX_FRET), MAX_FRET), metrics)
+}
+
+function fretGuideX(fret: number, metrics: LandingMetrics | null) {
+  return rawXToWorld(fretLineX(Math.min(fret, MAX_FRET), MAX_FRET), metrics)
+}
+
+function landingCenterX(metrics: LandingMetrics | null) {
+  if (!metrics) return NECK_CENTER_X
+  return (rawXToWorld(0, metrics) + rawXToWorld(FRETBOARD_VIEW_WIDTH, metrics)) / 2
+}
+
+function targetPoint(note: HighwayNote, metrics: LandingMetrics | null): FlightPoint {
   return {
-    x: fretTargetX(note.fret),
-    y: stringLaneY(note.stringIndex),
+    x: fretTargetX(note.fret, metrics),
+    y: stringLaneY(note.stringIndex, metrics),
     z: PLAYHEAD_Z,
   }
 }
 
-function timeDepthProgress(time: number, currentTime: number) {
-  return clamp((time - currentTime) / LOOKAHEAD_SECONDS, 0, 1)
+function densityProgress(density: number) {
+  const safeDensity = Number.isFinite(density) ? density : DEFAULT_3D_DENSITY
+  return clamp((safeDensity - MIN_3D_DENSITY) / (MAX_3D_DENSITY - MIN_3D_DENSITY), 0, 1)
+}
+
+function lookaheadForDensity(density: number) {
+  const progress = densityProgress(density)
+  return MAX_LOOKAHEAD_SECONDS - progress * (MAX_LOOKAHEAD_SECONDS - MIN_LOOKAHEAD_SECONDS)
+}
+
+function visibleNoteLimitForDensity(density: number) {
+  const progress = densityProgress(density)
+  return Math.round(MAX_VISIBLE_NOTE_COUNT - progress * (MAX_VISIBLE_NOTE_COUNT - MIN_VISIBLE_NOTE_COUNT))
+}
+
+function timeDepthProgress(time: number, currentTime: number, lookaheadSeconds: number) {
+  return clamp((time - currentTime) / lookaheadSeconds, 0, 1)
 }
 
 function depthScale(progress: number) {
   return 1 - progress * (1 - FAR_SCALE)
 }
 
-function highwayPoint(targetX: number, targetY: number, progress: number): FlightPoint {
+function highwayPoint(targetX: number, targetY: number, progress: number, centerX = NECK_CENTER_X): FlightPoint {
   const scale = depthScale(progress)
   return {
-    x: NECK_CENTER_X + (targetX - NECK_CENTER_X) * scale,
+    x: centerX + (targetX - centerX) * scale,
     y: targetY + (FAR_Y - targetY) * progress,
     z: PLAYHEAD_Z + (FAR_Z - PLAYHEAD_Z) * progress,
   }
@@ -147,15 +221,20 @@ function disposeObject(object: THREE.Object3D) {
   })
 }
 
-function noteWindow(notes: HighwayNote[], currentTime: number) {
+function noteWindow(
+  notes: HighwayNote[],
+  currentTime: number,
+  lookaheadSeconds: number,
+  visibleNoteLimit: number,
+) {
   return notes
     .filter(
       (note) =>
         note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS &&
-        note.time <= currentTime + LOOKAHEAD_SECONDS,
+        note.time <= currentTime + lookaheadSeconds,
     )
     .sort((a, b) => a.time - b.time || a.stringIndex - b.stringIndex || a.fret - b.fret)
-    .slice(0, MAX_VISIBLE_NOTES)
+    .slice(0, visibleNoteLimit)
 }
 
 function createLabelSprite(text: string) {
@@ -241,14 +320,29 @@ export function RocksmithNeckView({
   notes,
   placements,
   currentTime,
+  duration,
   isPlaying,
+  onScrub,
+  density = DEFAULT_3D_DENSITY,
   currentChord = '',
   themeId = 'dark',
 }: RocksmithNeckViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef<SceneState>({ notes: [], currentTime, isPlaying })
+  const interactionRef = useRef({ currentTime, duration, onScrub, density })
+  const [webglUnavailable, setWebglUnavailable] = useState(false)
+  const scrubRef = useRef<ScrubState>({
+    active: false,
+    pointerId: -1,
+    startY: 0,
+    startTime: 0,
+    pendingTime: null,
+    frame: null,
+  })
   const theme = getFretboardTheme(themeId)
+  const lookaheadSeconds = lookaheadForDensity(density)
+  const visibleNoteLimit = visibleNoteLimitForDensity(density)
   const highwayNotes = useMemo(() => {
     return notes
       .map((note) => {
@@ -268,12 +362,80 @@ export function RocksmithNeckView({
   }, [notes, placements])
 
   stateRef.current = { notes: highwayNotes, currentTime, isPlaying }
+  interactionRef.current = { currentTime, duration, onScrub, density }
+
+  function scrubSecondsPerPixel() {
+    const height = containerRef.current?.getBoundingClientRect().height ?? 420
+    const lookaheadSeconds = lookaheadForDensity(interactionRef.current.density)
+    return clamp(lookaheadSeconds / Math.max(260, height * 0.82), 0.0045, 0.014)
+  }
+
+  function scheduleScrub(nextTime: number) {
+    const scrubState = scrubRef.current
+    const { duration: songDuration, onScrub: scrubToTime } = interactionRef.current
+    scrubState.pendingTime = clamp(nextTime, 0, songDuration)
+    if (scrubState.frame !== null) return
+
+    scrubState.frame = requestAnimationFrame(() => {
+      const pendingTime = scrubState.pendingTime
+      scrubState.frame = null
+      scrubState.pendingTime = null
+      if (pendingTime === null) return
+      scrubToTime(pendingTime)
+    })
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 && event.pointerType === 'mouse') return
+    const scrub = scrubRef.current
+    scrub.active = true
+    scrub.pointerId = event.pointerId
+    scrub.startY = event.clientY
+    scrub.startTime = interactionRef.current.currentTime
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const scrub = scrubRef.current
+    if (!scrub.active || scrub.pointerId !== event.pointerId) return
+    const deltaY = event.clientY - scrub.startY
+    scheduleScrub(scrub.startTime + deltaY * scrubSecondsPerPixel())
+    event.preventDefault()
+  }
+
+  function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
+    const scrub = scrubRef.current
+    if (scrub.pointerId !== event.pointerId) return
+    scrub.active = false
+    scrub.pointerId = -1
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    event.preventDefault()
+  }
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    scheduleScrub(interactionRef.current.currentTime + event.deltaY * scrubSecondsPerPixel())
+    event.preventDefault()
+  }
+
+  useEffect(() => {
+    const scrubState = scrubRef.current
+    return () => {
+      if (scrubState.frame !== null) {
+        cancelAnimationFrame(scrubState.frame)
+        scrubState.frame = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const container = containerRef.current
     const canvas = canvasRef.current
     if (!container || !canvas) return
     const host = container
+    const scrubState = scrubRef.current
 
     const scene = new THREE.Scene()
     scene.fog = new THREE.Fog(0x070907, 5.4, 18)
@@ -282,83 +444,118 @@ export function RocksmithNeckView({
     camera.position.set(NECK_CENTER_X, -0.28, 7.4)
     camera.lookAt(NECK_CENTER_X, -0.28, 0)
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance',
-      preserveDrawingBuffer: true,
-    })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: true,
+      })
+      setWebglUnavailable(false)
+    } catch {
+      setWebglUnavailable(true)
+      return
+    }
     renderer.setClearColor(0x070907, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     renderer.outputColorSpace = THREE.SRGBColorSpace
 
     const neckGroup = new THREE.Group()
+    const landingMetricsRef = { current: null as LandingMetrics | null }
     scene.add(neckGroup)
 
-    const laneTopY = stringLaneY(0) + LANE_PADDING_Y
-    const laneBottomY = stringLaneY(5) - LANE_PADDING_Y
-    const deckCorners = [
-      highwayPoint(VIEW_LEFT, laneBottomY, 0),
-      highwayPoint(VIEW_RIGHT, laneBottomY, 0),
-      highwayPoint(VIEW_RIGHT, laneTopY, 0),
-      highwayPoint(VIEW_LEFT, laneTopY, 0),
-      highwayPoint(VIEW_LEFT, laneBottomY, 1),
-      highwayPoint(VIEW_RIGHT, laneBottomY, 1),
-      highwayPoint(VIEW_RIGHT, laneTopY, 1),
-      highwayPoint(VIEW_LEFT, laneTopY, 1),
-    ]
-    const deckFaces = [
-      0, 1, 5, 0, 5, 4,
-      3, 7, 6, 3, 6, 2,
-      0, 4, 7, 0, 7, 3,
-      1, 2, 6, 1, 6, 5,
-    ]
-    const deckVertices: number[] = []
-    for (const cornerIndex of deckFaces) {
-      pushPoint(deckVertices, deckCorners[cornerIndex])
-    }
-    const deckGeometry = new THREE.BufferGeometry()
-    deckGeometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(deckVertices, 3),
-    )
-    deckGeometry.computeVertexNormals()
-    const deck = new THREE.Mesh(
-      deckGeometry,
-      new THREE.MeshStandardMaterial({
-        color: theme.neckStart,
-        transparent: true,
-        opacity: 0.16,
-        roughness: 0.84,
-        metalness: 0.02,
-        side: THREE.DoubleSide,
-      }),
-    )
-    neckGroup.add(deck)
-
-    for (const string of [...GUITAR_STRINGS].reverse()) {
-      const y = stringLaneY(string.index)
-      const nearLeft = highwayPoint(VIEW_LEFT, y, 0)
-      const nearRight = highwayPoint(VIEW_RIGHT, y, 0)
-      const farLeft = highwayPoint(VIEW_LEFT, y, 1)
-      const farRight = highwayPoint(VIEW_RIGHT, y, 1)
-
-      neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(farLeft)], string.color, 0.22))
-      neckGroup.add(createLine([pointTuple(nearRight), pointTuple(farRight)], string.color, 0.22))
-      neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(nearRight)], string.color, 0.68))
-      neckGroup.add(createLine([pointTuple(farLeft), pointTuple(farRight)], string.color, 0.18))
+    function readLandingMetrics(): LandingMetrics | null {
+      const canvasRect = host.getBoundingClientRect()
+      const fretboard = document.querySelector('.neck-panel[data-flight-mode="connected"] .fretboard')
+      const fretboardRect = fretboard?.getBoundingClientRect()
+      if (!fretboardRect || !canvasRect.width || !canvasRect.height) return null
+      return {
+        canvasLeft: canvasRect.left,
+        canvasTop: canvasRect.top,
+        canvasWidth: canvasRect.width,
+        canvasHeight: canvasRect.height,
+        fretboardLeft: fretboardRect.left,
+        fretboardTop: fretboardRect.top,
+        fretboardWidth: fretboardRect.width,
+        fretboardHeight: fretboardRect.height,
+      }
     }
 
-    for (let fret = 0; fret <= MAX_FRET; fret += 1) {
-      const x = fretGuideX(fret)
-      const nearBottom = highwayPoint(x, laneBottomY, 0)
-      const nearTop = highwayPoint(x, laneTopY, 0)
-      const farBottom = highwayPoint(x, laneBottomY, 1)
-      const farTop = highwayPoint(x, laneTopY, 1)
-      neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(farBottom)], '#f4f1e8', fret === 0 ? 0.24 : 0.07))
-      neckGroup.add(createLine([pointTuple(nearTop), pointTuple(farTop)], '#f4f1e8', fret === 0 ? 0.2 : 0.05))
-      neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(nearTop)], '#f4f1e8', fret === 0 ? 0.36 : 0.1))
+    function clearNeckGeometry() {
+      for (const child of [...neckGroup.children]) {
+        neckGroup.remove(child)
+        disposeObject(child)
+      }
+    }
+
+    function rebuildNeckGeometry(metrics: LandingMetrics | null) {
+      clearNeckGeometry()
+      const centerX = landingCenterX(metrics)
+      const laneTopY = stringLaneY(0, metrics) + LANE_PADDING_Y
+      const laneBottomY = stringLaneY(5, metrics) - LANE_PADDING_Y
+      const viewLeft = rawXToWorld(0, metrics)
+      const viewRight = rawXToWorld(FRETBOARD_VIEW_WIDTH, metrics)
+      const deckCorners = [
+        highwayPoint(viewLeft, laneBottomY, 0, centerX),
+        highwayPoint(viewRight, laneBottomY, 0, centerX),
+        highwayPoint(viewRight, laneTopY, 0, centerX),
+        highwayPoint(viewLeft, laneTopY, 0, centerX),
+        highwayPoint(viewLeft, laneBottomY, 1, centerX),
+        highwayPoint(viewRight, laneBottomY, 1, centerX),
+        highwayPoint(viewRight, laneTopY, 1, centerX),
+        highwayPoint(viewLeft, laneTopY, 1, centerX),
+      ]
+      const deckFaces = [
+        0, 1, 5, 0, 5, 4,
+        3, 7, 6, 3, 6, 2,
+        0, 4, 7, 0, 7, 3,
+        1, 2, 6, 1, 6, 5,
+      ]
+      const deckVertices: number[] = []
+      for (const cornerIndex of deckFaces) {
+        pushPoint(deckVertices, deckCorners[cornerIndex])
+      }
+      const deckGeometry = new THREE.BufferGeometry()
+      deckGeometry.setAttribute('position', new THREE.Float32BufferAttribute(deckVertices, 3))
+      deckGeometry.computeVertexNormals()
+      const deck = new THREE.Mesh(
+        deckGeometry,
+        new THREE.MeshStandardMaterial({
+          color: theme.neckStart,
+          transparent: true,
+          opacity: 0.16,
+          roughness: 0.84,
+          metalness: 0.02,
+          side: THREE.DoubleSide,
+        }),
+      )
+      neckGroup.add(deck)
+
+      for (const guitarString of [...GUITAR_STRINGS].reverse()) {
+        const y = stringLaneY(guitarString.index, metrics)
+        const nearLeft = highwayPoint(viewLeft, y, 0, centerX)
+        const nearRight = highwayPoint(viewRight, y, 0, centerX)
+        const farLeft = highwayPoint(viewLeft, y, 1, centerX)
+        const farRight = highwayPoint(viewRight, y, 1, centerX)
+
+        neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(farLeft)], guitarString.color, 0.22))
+        neckGroup.add(createLine([pointTuple(nearRight), pointTuple(farRight)], guitarString.color, 0.22))
+        neckGroup.add(createLine([pointTuple(nearLeft), pointTuple(nearRight)], guitarString.color, 0.68))
+        neckGroup.add(createLine([pointTuple(farLeft), pointTuple(farRight)], guitarString.color, 0.18))
+      }
+
+      for (let fret = 0; fret <= MAX_FRET; fret += 1) {
+        const x = fretGuideX(fret, metrics)
+        const nearBottom = highwayPoint(x, laneBottomY, 0, centerX)
+        const nearTop = highwayPoint(x, laneTopY, 0, centerX)
+        const farBottom = highwayPoint(x, laneBottomY, 1, centerX)
+        const farTop = highwayPoint(x, laneTopY, 1, centerX)
+        neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(farBottom)], '#f4f1e8', fret === 0 ? 0.24 : 0.07))
+        neckGroup.add(createLine([pointTuple(nearTop), pointTuple(farTop)], '#f4f1e8', fret === 0 ? 0.2 : 0.05))
+        neckGroup.add(createLine([pointTuple(nearBottom), pointTuple(nearTop)], '#f4f1e8', fret === 0 ? 0.36 : 0.1))
+      }
     }
 
     scene.add(new THREE.HemisphereLight(0xfff2ce, 0x101410, 1.35))
@@ -380,6 +577,8 @@ export function RocksmithNeckView({
       camera.position.set(NECK_CENTER_X, -0.28, 7.4)
       camera.lookAt(NECK_CENTER_X, -0.28, 0)
       camera.updateProjectionMatrix()
+      landingMetricsRef.current = readLandingMetrics()
+      rebuildNeckGeometry(landingMetricsRef.current)
     }
 
     const observer = new ResizeObserver(resize)
@@ -389,7 +588,11 @@ export function RocksmithNeckView({
     let animationFrame = 0
     function render() {
       const { notes: currentNotes, currentTime: now, isPlaying: playing } = stateRef.current
-      const visible = noteWindow(currentNotes, now)
+      const lookaheadSeconds = lookaheadForDensity(interactionRef.current.density)
+      const visibleNoteLimit = visibleNoteLimitForDensity(interactionRef.current.density)
+      const landingMetrics = landingMetricsRef.current
+      const centerX = landingCenterX(landingMetrics)
+      const visible = noteWindow(currentNotes, now, lookaheadSeconds, visibleNoteLimit)
       const visibleIds = new Set(visible.map((note) => note.id))
 
       for (const [id, item] of noteObjects) {
@@ -407,17 +610,17 @@ export function RocksmithNeckView({
           scene.add(item.group)
         }
 
-        const landing = targetPoint(note)
-        const noteStartProgress = timeDepthProgress(note.time, now)
-        const noteEndProgress = timeDepthProgress(note.time + note.duration, now)
-        const head = highwayPoint(landing.x, landing.y, noteStartProgress)
-        let tail = highwayPoint(landing.x, landing.y, noteEndProgress)
+        const landing = targetPoint(note, landingMetrics)
+        const noteStartProgress = timeDepthProgress(note.time, now, lookaheadSeconds)
+        const noteEndProgress = timeDepthProgress(note.time + note.duration, now, lookaheadSeconds)
+        const head = highwayPoint(landing.x, landing.y, noteStartProgress, centerX)
+        let tail = highwayPoint(landing.x, landing.y, noteEndProgress, centerX)
         const active = note.time <= now && note.time + note.duration >= now
         const headVector = new THREE.Vector3()
         const tailVector = new THREE.Vector3()
         const midpoint = new THREE.Vector3()
         const direction = new THREE.Vector3()
-        const futurePoint = highwayPoint(landing.x, landing.y, 1)
+        const futurePoint = highwayPoint(landing.x, landing.y, 1, centerX)
         const pathDirection = new THREE.Vector3(
           futurePoint.x - landing.x,
           futurePoint.y - landing.y,
@@ -473,6 +676,10 @@ export function RocksmithNeckView({
 
     return () => {
       cancelAnimationFrame(animationFrame)
+      if (scrubState.frame !== null) {
+        cancelAnimationFrame(scrubState.frame)
+        scrubState.frame = null
+      }
       observer.disconnect()
       for (const item of noteObjects.values()) {
         scene.remove(item.group)
@@ -488,8 +695,22 @@ export function RocksmithNeckView({
   }, [theme.id, theme.neckStart])
 
   return (
-    <div className="rocksmith-neck-view" ref={containerRef} role="img" aria-label="Experimental 3D guitar note highway">
+    <div
+      className="rocksmith-neck-view"
+      ref={containerRef}
+      role="img"
+      aria-label="Experimental 3D guitar note highway"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onWheel={handleWheel}
+      data-density={Math.round(density)}
+      data-lookahead={lookaheadSeconds.toFixed(2)}
+      data-visible-limit={visibleNoteLimit}
+    >
       <canvas ref={canvasRef} aria-hidden="true" />
+      {webglUnavailable && <span className="rocksmith-webgl-fallback">3D view needs WebGL.</span>}
       {currentChord && <strong className="rocksmith-chord-label">{currentChord}</strong>}
     </div>
   )
