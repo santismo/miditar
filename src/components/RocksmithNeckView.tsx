@@ -34,21 +34,21 @@ type SceneState = {
   isPlaying: boolean
 }
 
-const PLAY_Z = 3.1
-const FAR_Z = -34
-const Z_PER_SECOND = 4.25
+const PLAY_X = -2.35
+const FAR_X = 4.9
+const X_PER_SECOND = 0.92
 const NEAR_TRAIL_SECONDS = 0.42
-const STRING_SPACING = 0.74
-const NOTE_WIDTH = 0.5
-const NOTE_HEIGHT = 0.12
-const MIN_NOTE_DEPTH = 0.32
+const STRING_HEIGHT_STEP = 0.38
+const NOTE_HEIGHT = 0.22
+const NOTE_THICKNESS = 0.12
+const MIN_NOTE_LENGTH = 0.34
 
-function stringX(stringIndex: number) {
-  return (5 - stringIndex - 2.5) * STRING_SPACING
+function stringLaneY(stringIndex: number) {
+  return (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
 }
 
-function zForTime(time: number, currentTime: number) {
-  return PLAY_Z - (time - currentTime) * Z_PER_SECOND
+function xForTime(time: number, currentTime: number) {
+  return PLAY_X + (time - currentTime) * X_PER_SECOND
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -70,7 +70,10 @@ function disposeObject(object: THREE.Object3D) {
 
 function noteWindow(notes: HighwayNote[], currentTime: number) {
   return notes.filter(
-    (note) => note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS && zForTime(note.time, currentTime) >= FAR_Z,
+    (note) =>
+      note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS &&
+      xForTime(note.time, currentTime) <= FAR_X &&
+      xForTime(note.time + note.duration, currentTime) >= PLAY_X - 0.6,
   )
 }
 
@@ -183,8 +186,8 @@ export function RocksmithNeckView({
     scene.fog = new THREE.Fog(0x070907, 13, 42)
 
     const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 90)
-    camera.position.set(0, 5.4, 8.6)
-    camera.lookAt(0, 0.06, -13.5)
+    camera.position.set(0.95, 0.08, 7.4)
+    camera.lookAt(0.95, 0, 0)
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -199,23 +202,23 @@ export function RocksmithNeckView({
     const neckGroup = new THREE.Group()
     scene.add(neckGroup)
 
-    const deckLength = Math.abs(FAR_Z - PLAY_Z) + 5
-    const deckCenterZ = (FAR_Z + PLAY_Z) / 2 - 1
+    const deckWidth = FAR_X - PLAY_X + 0.9
+    const deckCenterX = (FAR_X + PLAY_X) / 2
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(5.2, 0.08, deckLength),
+      new THREE.BoxGeometry(deckWidth, 2.7, 0.08),
       new THREE.MeshStandardMaterial({
         color: theme.neckStart,
         roughness: 0.84,
         metalness: 0.02,
       }),
     )
-    deck.position.set(0, -0.09, deckCenterZ)
+    deck.position.set(deckCenterX, 0, -0.08)
     neckGroup.add(deck)
 
     for (const string of [...GUITAR_STRINGS].reverse()) {
-      const x = stringX(string.index)
+      const y = stringLaneY(string.index)
       const stringMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.016 + (5 - string.index) * 0.003, 0.016 + (5 - string.index) * 0.003, deckLength, 12),
+        new THREE.CylinderGeometry(0.012 + (5 - string.index) * 0.002, 0.012 + (5 - string.index) * 0.002, deckWidth, 12),
         new THREE.MeshStandardMaterial({
           color: string.color,
           emissive: string.color,
@@ -223,27 +226,27 @@ export function RocksmithNeckView({
           roughness: 0.44,
         }),
       )
-      stringMesh.rotation.x = Math.PI / 2
-      stringMesh.position.set(x, 0.035, deckCenterZ)
+      stringMesh.rotation.z = Math.PI / 2
+      stringMesh.position.set(deckCenterX, y, 0.05)
       neckGroup.add(stringMesh)
 
       const guide = createLine(
         [
-          [x, 0.1, PLAY_Z + 1],
-          [x, 0.1, FAR_Z],
+          [PLAY_X - 0.35, y, 0.12],
+          [FAR_X, y, 0.12],
         ],
         string.color,
-        0.28,
+        0.32,
       )
       neckGroup.add(guide)
     }
 
-    for (let index = 0; index < 18; index += 1) {
-      const z = PLAY_Z - index * 2.2
+    for (let index = 0; index < 13; index += 1) {
+      const x = PLAY_X + index * 0.62
       const line = createLine(
         [
-          [-2.28, 0.13, z],
-          [2.28, 0.13, z],
+          [x, -1.18, 0.11],
+          [x, 1.18, 0.11],
         ],
         index === 0 ? '#ff6659' : '#f4f1e8',
         index === 0 ? 0.95 : 0.2,
@@ -252,16 +255,16 @@ export function RocksmithNeckView({
     }
 
     const playLine = new THREE.Mesh(
-      new THREE.BoxGeometry(4.95, 0.04, 0.12),
+      new THREE.BoxGeometry(0.07, 2.55, 0.12),
       new THREE.MeshBasicMaterial({ color: '#ff6659' }),
     )
-    playLine.position.set(0, 0.17, PLAY_Z)
+    playLine.position.set(PLAY_X, 0, 0.19)
     neckGroup.add(playLine)
 
     const playGlow = createLine(
       [
-        [-2.5, 0.22, PLAY_Z],
-        [2.5, 0.22, PLAY_Z],
+        [PLAY_X, -1.24, 0.28],
+        [PLAY_X, 1.24, 0.28],
       ],
       '#ffd36b',
       0.75,
@@ -283,9 +286,9 @@ export function RocksmithNeckView({
       const isWide = aspect > 4.4
       renderer.setSize(width, height, false)
       camera.aspect = width / height
-      camera.fov = width < 520 ? 45 : isWide ? 24 : 39
-      camera.position.set(0, isWide ? 4.6 : 5.4, isWide ? 6.1 : 8.6)
-      camera.lookAt(0, 0.06, isWide ? -10.5 : -13.5)
+      camera.fov = width < 520 ? 43 : isWide ? 29 : 36
+      camera.position.set(isWide ? 0.95 : 1.05, 0.08, isWide ? 6.2 : 7.4)
+      camera.lookAt(0.95, 0, 0)
       camera.updateProjectionMatrix()
     }
 
@@ -314,19 +317,20 @@ export function RocksmithNeckView({
           scene.add(item.group)
         }
 
-        const startZ = Math.min(PLAY_Z + 0.72, zForTime(note.time, now))
-        const endZ = zForTime(note.time + note.duration, now)
-        const depth = Math.max(MIN_NOTE_DEPTH, Math.abs(startZ - endZ))
-        const centerZ = (startZ + endZ) / 2
+        const startX = Math.max(PLAY_X - 0.35, xForTime(note.time, now))
+        const endX = xForTime(note.time + note.duration, now)
+        const length = Math.max(MIN_NOTE_LENGTH, Math.abs(endX - startX))
+        const centerX = (startX + endX) / 2
         const active = note.time <= now && note.time + note.duration >= now
+        const laneY = stringLaneY(note.stringIndex)
 
-        item.group.position.set(stringX(note.stringIndex), active ? 0.31 : 0.22, centerZ)
-        item.block.scale.set(NOTE_WIDTH, active ? NOTE_HEIGHT * 1.42 : NOTE_HEIGHT, depth)
+        item.group.position.set(centerX, laneY, active ? 0.28 : 0.2)
+        item.block.scale.set(length, active ? NOTE_HEIGHT * 1.25 : NOTE_HEIGHT, NOTE_THICKNESS)
         item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
-        item.label.position.set(0, active ? 0.36 : 0.29, Math.min(depth / 2 - 0.08, 0.38))
+        item.label.position.set(Math.max(-length / 2 + 0.24, -0.08), 0, active ? 0.24 : 0.19)
       }
 
-      playLine.scale.y = playing ? 1.8 : 1
+      playLine.scale.x = playing ? 1.8 : 1
       renderer.render(scene, camera)
       animationFrame = requestAnimationFrame(render)
     }
