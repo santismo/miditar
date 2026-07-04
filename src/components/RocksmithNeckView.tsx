@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { MidiNote, MidiPlacement } from '../lib/midi'
 import { GUITAR_STRINGS } from '../lib/fretboard'
+import {
+  FRETBOARD_LEFT,
+  FRETBOARD_RIGHT,
+  FRETBOARD_VIEW_WIDTH,
+  fretLineX,
+  fretboardNoteX,
+} from '../lib/fretboardLayout'
 import { getFretboardTheme, type FretboardThemeId } from './fretboardThemes'
 
 type RocksmithNeckViewProps = {
@@ -26,6 +33,7 @@ type NoteObject = {
   group: THREE.Group
   block: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
   label: THREE.Sprite
+  guide: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
 }
 
 type SceneState = {
@@ -34,21 +42,41 @@ type SceneState = {
   isPlaying: boolean
 }
 
-const PLAY_X = -2.35
-const FAR_X = 4.9
-const X_PER_SECOND = 0.92
+const MAX_FRET = 22
+const NECK_LEFT = -2.35
+const NECK_RIGHT = 2.65
+const SPAWN_X = NECK_RIGHT + 1.05
+const LOOKAHEAD_SECONDS = 7.8
 const NEAR_TRAIL_SECONDS = 0.42
 const STRING_HEIGHT_STEP = 0.38
-const NOTE_HEIGHT = 0.22
+const NOTE_WIDTH = 0.34
+const NOTE_HEIGHT = 0.2
 const NOTE_THICKNESS = 0.12
-const MIN_NOTE_LENGTH = 0.34
 
 function stringLaneY(stringIndex: number) {
   return (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
 }
 
-function xForTime(time: number, currentTime: number) {
-  return PLAY_X + (time - currentTime) * X_PER_SECOND
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function fretScaleX(rawX: number) {
+  const normalized = (rawX - FRETBOARD_LEFT) / (FRETBOARD_VIEW_WIDTH - FRETBOARD_LEFT - FRETBOARD_RIGHT)
+  return NECK_LEFT + normalized * (NECK_RIGHT - NECK_LEFT)
+}
+
+function fretTargetX(fret: number) {
+  if (fret <= 0) return NECK_LEFT - 0.26
+  return fretScaleX(fretboardNoteX(Math.min(fret, MAX_FRET), MAX_FRET))
+}
+
+function fretGuideX(fret: number) {
+  return fretScaleX(fretLineX(Math.min(fret, MAX_FRET), MAX_FRET))
+}
+
+function flightProgress(time: number, currentTime: number) {
+  return clamp(1 - (time - currentTime) / LOOKAHEAD_SECONDS, 0, 1)
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -72,8 +100,7 @@ function noteWindow(notes: HighwayNote[], currentTime: number) {
   return notes.filter(
     (note) =>
       note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS &&
-      xForTime(note.time, currentTime) <= FAR_X &&
-      xForTime(note.time + note.duration, currentTime) >= PLAY_X - 0.6,
+      note.time <= currentTime + LOOKAHEAD_SECONDS,
   )
 }
 
@@ -126,10 +153,19 @@ function createNoteObject(note: HighwayNote) {
   block.receiveShadow = false
 
   const label = createLabelSprite(String(note.fret))
+  const guide = createLine(
+    [
+      [0, 0, -0.04],
+      [0, 0, -0.04],
+    ],
+    note.color,
+    0.56,
+  ) as THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
   const group = new THREE.Group()
+  group.add(guide)
   group.add(block)
   group.add(label)
-  return { group, block, label }
+  return { group, block, label, guide }
 }
 
 function createLine(
@@ -202,8 +238,8 @@ export function RocksmithNeckView({
     const neckGroup = new THREE.Group()
     scene.add(neckGroup)
 
-    const deckWidth = FAR_X - PLAY_X + 0.9
-    const deckCenterX = (FAR_X + PLAY_X) / 2
+    const deckWidth = NECK_RIGHT - NECK_LEFT + 0.7
+    const deckCenterX = (NECK_RIGHT + NECK_LEFT) / 2
     const deck = new THREE.Mesh(
       new THREE.BoxGeometry(deckWidth, 2.7, 0.08),
       new THREE.MeshStandardMaterial({
@@ -232,8 +268,8 @@ export function RocksmithNeckView({
 
       const guide = createLine(
         [
-          [PLAY_X - 0.35, y, 0.12],
-          [FAR_X, y, 0.12],
+          [NECK_LEFT - 0.34, y, 0.12],
+          [NECK_RIGHT + 0.34, y, 0.12],
         ],
         string.color,
         0.32,
@@ -241,35 +277,18 @@ export function RocksmithNeckView({
       neckGroup.add(guide)
     }
 
-    for (let index = 0; index < 13; index += 1) {
-      const x = PLAY_X + index * 0.62
+    for (let fret = 0; fret <= MAX_FRET; fret += 1) {
+      const x = fretGuideX(fret)
       const line = createLine(
         [
           [x, -1.18, 0.11],
           [x, 1.18, 0.11],
         ],
-        index === 0 ? '#ff6659' : '#f4f1e8',
-        index === 0 ? 0.95 : 0.2,
+        '#f4f1e8',
+        fret === 0 ? 0.46 : 0.14,
       )
       neckGroup.add(line)
     }
-
-    const playLine = new THREE.Mesh(
-      new THREE.BoxGeometry(0.07, 2.55, 0.12),
-      new THREE.MeshBasicMaterial({ color: '#ff6659' }),
-    )
-    playLine.position.set(PLAY_X, 0, 0.19)
-    neckGroup.add(playLine)
-
-    const playGlow = createLine(
-      [
-        [PLAY_X, -1.24, 0.28],
-        [PLAY_X, 1.24, 0.28],
-      ],
-      '#ffd36b',
-      0.75,
-    )
-    neckGroup.add(playGlow)
 
     scene.add(new THREE.HemisphereLight(0xfff2ce, 0x101410, 1.35))
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.25)
@@ -317,20 +336,25 @@ export function RocksmithNeckView({
           scene.add(item.group)
         }
 
-        const startX = Math.max(PLAY_X - 0.35, xForTime(note.time, now))
-        const endX = xForTime(note.time + note.duration, now)
-        const length = Math.max(MIN_NOTE_LENGTH, Math.abs(endX - startX))
-        const centerX = (startX + endX) / 2
+        const progress = flightProgress(note.time, now)
+        const targetX = fretTargetX(note.fret)
+        const spawnX = Math.max(SPAWN_X, targetX + 1.05)
+        const x = spawnX + (targetX - spawnX) * progress
         const active = note.time <= now && note.time + note.duration >= now
         const laneY = stringLaneY(note.stringIndex)
+        const z = active ? 0.32 : 0.2 + (1 - progress) * 0.2
 
-        item.group.position.set(centerX, laneY, active ? 0.28 : 0.2)
-        item.block.scale.set(length, active ? NOTE_HEIGHT * 1.25 : NOTE_HEIGHT, NOTE_THICKNESS)
+        item.group.position.set(x, laneY, z)
+        item.block.scale.set(active ? NOTE_WIDTH * 1.22 : NOTE_WIDTH, active ? NOTE_HEIGHT * 1.18 : NOTE_HEIGHT, NOTE_THICKNESS)
         item.block.material.emissiveIntensity = active ? 0.74 : playing ? 0.36 : 0.28
-        item.label.position.set(Math.max(-length / 2 + 0.24, -0.08), 0, active ? 0.24 : 0.19)
+        item.label.position.set(0, 0, active ? 0.24 : 0.18)
+
+        const guidePoints = item.guide.geometry.attributes.position
+        guidePoints.setXYZ(0, 0, 0, -0.05)
+        guidePoints.setXYZ(1, targetX - x, 0, 0.12 - z)
+        guidePoints.needsUpdate = true
       }
 
-      playLine.scale.x = playing ? 1.8 : 1
       renderer.render(scene, camera)
       animationFrame = requestAnimationFrame(render)
     }
