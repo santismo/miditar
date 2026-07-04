@@ -1,1 +1,0 @@
-import{i as e,n as t,r as n,t as r}from"./App-BST9uwZ9.js";var i=e(),a=n(),o=t();(0,a.createRoot)(document.getElementById(`root`)).render((0,o.jsx)(i.StrictMode,{children:(0,o.jsx)(r,{desktopSizing:!0})}));
