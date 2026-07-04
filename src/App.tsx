@@ -296,6 +296,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     ],
   )
   const currentChord = currentMarkerText(song, currentTime)
+  const connectedFlightMode = instrumentViewMode === 'guitar' && guitarNeckDisplayMode === 'rocksmith'
 
   useEffect(() => {
     if (!song) return
@@ -892,6 +893,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         trackColors={trackColors}
         themeId={fretboardTheme}
         stretchToFit={stretchToFit}
+        connectedFlight={connectedFlightMode}
       />
     )
   }
@@ -1235,6 +1237,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 className="desktop-live-instrument neck-panel"
                 data-neck-theme={fretboardTheme}
                 data-view-mode={instrumentViewMode}
+                data-flight-mode={connectedFlightMode ? 'connected' : undefined}
                 aria-label={liveInstrumentAriaLabel()}
               >
                 {renderLiveInstrument(true)}
@@ -1719,6 +1722,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           className="neck-panel"
           data-neck-theme={fretboardTheme}
           data-view-mode={instrumentViewMode}
+          data-flight-mode={connectedFlightMode ? 'connected' : undefined}
           aria-label={liveInstrumentAriaLabel()}
         >
           {renderLiveInstrument(desktopSizing)}

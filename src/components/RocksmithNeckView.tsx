@@ -51,19 +51,26 @@ type SceneState = {
 const MAX_FRET = 22
 const NECK_LEFT = -2.35
 const NECK_RIGHT = 2.65
-const SPAWN_X = 0.15
-const SPAWN_Y = 1.38
-const LOOKAHEAD_SECONDS = 7.8
+const NECK_CENTER_X = (NECK_LEFT + NECK_RIGHT) / 2
+const SPAWN_X = NECK_CENTER_X
+const SPAWN_Y = 0.38
+const LOOKAHEAD_SECONDS = 4.7
+const MAX_VISIBLE_NOTES = 64
 const NEAR_TRAIL_SECONDS = 0
-const STRING_HEIGHT_STEP = 0.38
-const NOTE_WIDTH = 0.34
-const NOTE_THICKNESS = 0.12
-const MIN_NOTE_LENGTH = 0.2
-const SPAWN_Z = -0.52
-const PLAYHEAD_Z = 0.28
+const STRING_HEIGHT_STEP = 0.035
+const LANDING_CENTER_Y = -1.2
+const VIEW_LEFT = fretScaleX(0)
+const VIEW_RIGHT = fretScaleX(FRETBOARD_VIEW_WIDTH)
+const VIEW_TOP = SPAWN_Y + 0.18
+const VIEW_BOTTOM = LANDING_CENTER_Y - 0.08
+const NOTE_WIDTH = 0.24
+const NOTE_THICKNESS = 0.08
+const MIN_NOTE_LENGTH = 0.16
+const SPAWN_Z = -0.55
+const PLAYHEAD_Z = 0.06
 
 function stringLaneY(stringIndex: number) {
-  return (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
+  return LANDING_CENTER_Y + (5 - stringIndex - 2.5) * STRING_HEIGHT_STEP
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -98,7 +105,7 @@ function targetPoint(note: HighwayNote): FlightPoint {
 
 function spawnPoint(targetX: number): FlightPoint {
   return {
-    x: SPAWN_X + (targetX - (NECK_LEFT + NECK_RIGHT) / 2) * 0.16,
+    x: SPAWN_X + (targetX - NECK_CENTER_X) * 0.1,
     y: SPAWN_Y,
     z: SPAWN_Z,
   }
@@ -134,11 +141,14 @@ function disposeObject(object: THREE.Object3D) {
 }
 
 function noteWindow(notes: HighwayNote[], currentTime: number) {
-  return notes.filter(
-    (note) =>
-      note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS &&
-      note.time <= currentTime + LOOKAHEAD_SECONDS,
-  )
+  return notes
+    .filter(
+      (note) =>
+        note.time + note.duration >= currentTime - NEAR_TRAIL_SECONDS &&
+        note.time <= currentTime + LOOKAHEAD_SECONDS,
+    )
+    .sort((a, b) => a.time - b.time || a.stringIndex - b.stringIndex || a.fret - b.fret)
+    .slice(0, MAX_VISIBLE_NOTES)
 }
 
 function createLabelSprite(text: string) {
@@ -258,38 +268,38 @@ export function RocksmithNeckView({
     const host = container
 
     const scene = new THREE.Scene()
-    scene.fog = new THREE.Fog(0x070907, 13, 42)
+    scene.fog = new THREE.Fog(0x070907, 7, 22)
 
-    const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 90)
-    camera.position.set(0.95, 0.08, 7.4)
-    camera.lookAt(0.95, 0, 0)
+    const camera = new THREE.OrthographicCamera(VIEW_LEFT, VIEW_RIGHT, VIEW_TOP, VIEW_BOTTOM, 0.1, 90)
+    camera.position.set(NECK_CENTER_X, -0.28, 7.4)
+    camera.lookAt(NECK_CENTER_X, -0.28, 0)
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: false,
+      alpha: true,
       powerPreference: 'high-performance',
       preserveDrawingBuffer: true,
     })
-    renderer.setClearColor(0x070907, 1)
+    renderer.setClearColor(0x070907, 0)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
 
     const neckGroup = new THREE.Group()
     scene.add(neckGroup)
 
-    const deckWidth = NECK_RIGHT - NECK_LEFT + 0.7
-    const deckCenterX = (NECK_RIGHT + NECK_LEFT) / 2
+    const deckWidth = VIEW_RIGHT - VIEW_LEFT
+    const deckCenterX = (VIEW_LEFT + VIEW_RIGHT) / 2
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(deckWidth, 2.7, 0.08),
+      new THREE.BoxGeometry(deckWidth, 0.96, 0.08),
       new THREE.MeshStandardMaterial({
         color: theme.neckStart,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.1,
         roughness: 0.84,
         metalness: 0.02,
       }),
     )
-    deck.position.set(deckCenterX, 0, -0.08)
+    deck.position.set(deckCenterX, LANDING_CENTER_Y, -0.08)
     neckGroup.add(deck)
 
     for (const string of [...GUITAR_STRINGS].reverse()) {
@@ -299,8 +309,10 @@ export function RocksmithNeckView({
         new THREE.MeshStandardMaterial({
           color: string.color,
           emissive: string.color,
-          emissiveIntensity: 0.18,
+          emissiveIntensity: 0.24,
           roughness: 0.44,
+          transparent: true,
+          opacity: 0.76,
         }),
       )
       stringMesh.rotation.z = Math.PI / 2
@@ -309,11 +321,11 @@ export function RocksmithNeckView({
 
       const guide = createLine(
         [
-          [NECK_LEFT - 0.34, y, 0.12],
-          [NECK_RIGHT + 0.34, y, 0.12],
+          [VIEW_LEFT, y, 0.12],
+          [VIEW_RIGHT, y, 0.12],
         ],
         string.color,
-        0.18,
+        0.24,
       )
       neckGroup.add(guide)
     }
@@ -322,11 +334,11 @@ export function RocksmithNeckView({
       const x = fretGuideX(fret)
       const line = createLine(
         [
-          [x, -1.18, 0.11],
-          [x, 1.18, 0.11],
+          [x, LANDING_CENTER_Y - 0.48, 0.11],
+          [x, LANDING_CENTER_Y + 0.48, 0.11],
         ],
         '#f4f1e8',
-        fret === 0 ? 0.32 : 0.08,
+        fret === 0 ? 0.34 : 0.1,
       )
       neckGroup.add(line)
     }
@@ -342,13 +354,13 @@ export function RocksmithNeckView({
       const rect = host.getBoundingClientRect()
       const width = Math.max(1, Math.floor(rect.width))
       const height = Math.max(1, Math.floor(rect.height))
-      const aspect = width / height
-      const isWide = aspect > 2.4
       renderer.setSize(width, height, false)
-      camera.aspect = width / height
-      camera.fov = width < 520 ? 43 : isWide ? 35 : 36
-      camera.position.set(isWide ? 0.95 : 1.05, 0.08, isWide ? 4.2 : 7.4)
-      camera.lookAt(0.95, 0, 0)
+      camera.left = VIEW_LEFT
+      camera.right = VIEW_RIGHT
+      camera.top = VIEW_TOP
+      camera.bottom = VIEW_BOTTOM
+      camera.position.set(NECK_CENTER_X, -0.28, 7.4)
+      camera.lookAt(NECK_CENTER_X, -0.28, 0)
       camera.updateProjectionMatrix()
     }
 
