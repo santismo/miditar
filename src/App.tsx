@@ -1,4 +1,4 @@
-import { type CSSProperties, type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type DragEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
 import { Dices, Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
 import './App.css'
@@ -67,6 +67,7 @@ type ActiveAudioEngine =
 type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
 type InstrumentViewMode = 'guitar' | 'piano'
 type NotationViewMode = 'tab' | 'sheet'
+type GuitarNeckDisplayMode = 'flat' | 'rocksmith'
 type AppVariant = 'mobile' | 'desktop'
 type AppProps = {
   variant?: AppVariant
@@ -83,6 +84,9 @@ const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
 ])
 const PIANO_INSTRUMENTS = new Set<PlaybackInstrumentId>(['sample:piano', 'synth'])
 const SMART_MELODY_SLOT_LABELS = ['Track 1 (Primary)', 'Track 2 (Secondary)', 'Track 3 (Bass)']
+const RocksmithNeckView = lazy(() =>
+  import('./components/RocksmithNeckView').then((module) => ({ default: module.RocksmithNeckView })),
+)
 
 function playableTracks(song: ParsedMidi) {
   return song.tracks.filter((track) => track.notes.length)
@@ -158,6 +162,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [notationViewMode, setNotationViewMode] = useState<NotationViewMode>('tab')
+  const [guitarNeckDisplayMode, setGuitarNeckDisplayMode] = useState<GuitarNeckDisplayMode>('flat')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [smartGuitarMelody, setSmartGuitarMelody] = useState(true)
   const [chordMelodyMode, setChordMelodyMode] = useState(true)
@@ -756,6 +761,34 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     )
   }
 
+  function renderGuitarInstrument(stretchToFit: boolean) {
+    if (guitarNeckDisplayMode === 'rocksmith') {
+      return (
+        <Suspense fallback={<div className="rocksmith-neck-view" aria-hidden="true" />}>
+          <RocksmithNeckView
+            notes={combinedNotes}
+            placements={notePlacements}
+            currentTime={currentTime}
+            isPlaying={isPlaying}
+            currentChord={currentChord}
+            themeId={fretboardTheme}
+          />
+        </Suspense>
+      )
+    }
+
+    return (
+      <Fretboard
+        notes={combinedNotes}
+        placements={notePlacements}
+        currentTime={currentTime}
+        trackColors={trackColors}
+        themeId={fretboardTheme}
+        stretchToFit={stretchToFit}
+      />
+    )
+  }
+
   function exportMappedMidi() {
     if (!virtualTrack) return
     const bytes = exportGuitarMappedMidi(song, virtualTrack, notePlacements, stringChannelMap)
@@ -1077,13 +1110,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           >
             <section className="desktop-instrument-panel">
               <div className="panel-mini-header">
-                <span>{instrumentViewMode === 'piano' ? 'Piano' : 'Fretboard'}</span>
+                <span>{instrumentViewMode === 'piano' ? 'Piano' : guitarNeckDisplayMode === 'rocksmith' ? '3D Neck' : 'Fretboard'}</span>
                 <strong>{currentChord || song.title}</strong>
               </div>
               <div
                 className="desktop-live-instrument neck-panel"
                 data-neck-theme={fretboardTheme}
                 data-view-mode={instrumentViewMode}
+                data-neck-display={guitarNeckDisplayMode}
                 aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
               >
                 {instrumentViewMode === 'piano' ? (
@@ -1095,14 +1129,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     melodyTrackIndexes={melodyTrackIndexes}
                   />
                 ) : (
-                  <Fretboard
-                    notes={combinedNotes}
-                    placements={notePlacements}
-                    currentTime={currentTime}
-                    trackColors={trackColors}
-                    themeId={fretboardTheme}
-                    stretchToFit
-                  />
+                  renderGuitarInstrument(true)
                 )}
               </div>
             </section>
@@ -1139,6 +1166,17 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                   </label>
 
                   {renderSmartMelodyControls()}
+
+                  <label className="field">
+                    <span>Neck Display</span>
+                    <select
+                      value={guitarNeckDisplayMode}
+                      onChange={(event) => setGuitarNeckDisplayMode(event.target.value as GuitarNeckDisplayMode)}
+                    >
+                      <option value="flat">Flat Fretboard</option>
+                      <option value="rocksmith">3D Moving Neck</option>
+                    </select>
+                  </label>
 
                   <label className="field">
                     <span>
@@ -1405,6 +1443,17 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 {renderSmartMelodyControls()}
 
                 <label className="field">
+                  <span>Neck Display</span>
+                  <select
+                    value={guitarNeckDisplayMode}
+                    onChange={(event) => setGuitarNeckDisplayMode(event.target.value as GuitarNeckDisplayMode)}
+                  >
+                    <option value="flat">Flat Fretboard</option>
+                    <option value="rocksmith">3D Moving Neck</option>
+                  </select>
+                </label>
+
+                <label className="field">
                   <span>String Channels</span>
                   <select
                     value={stringChannelPreset}
@@ -1576,6 +1625,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           className="neck-panel"
           data-neck-theme={fretboardTheme}
           data-view-mode={instrumentViewMode}
+          data-neck-display={guitarNeckDisplayMode}
           aria-label={instrumentViewMode === 'piano' ? 'Live piano keyboard' : 'Live guitar neck'}
         >
           {instrumentViewMode === 'piano' ? (
@@ -1587,14 +1637,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               melodyTrackIndexes={melodyTrackIndexes}
             />
           ) : (
-            <Fretboard
-              notes={combinedNotes}
-              placements={notePlacements}
-              currentTime={currentTime}
-              trackColors={trackColors}
-              themeId={fretboardTheme}
-              stretchToFit={desktopSizing}
-            />
+            renderGuitarInstrument(desktopSizing)
           )}
         </section>
       </main>
