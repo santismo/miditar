@@ -33,6 +33,8 @@ type LaneSplit = {
   count: number
 }
 
+type ChordPlacement = 'center' | 'right' | 'left'
+
 const DEFAULT_PIXELS_PER_SECOND = 168
 
 function timelineTop(midi: ParsedMidi, time: number, pixelsPerSecond: number) {
@@ -74,6 +76,10 @@ function pitchClassLabel(midi: number) {
   return noteName(midi).replace(/-?\d+$/, '')
 }
 
+function notesOverlap(a: MidiNote, b: MidiNote) {
+  return a.tick < b.endTick && b.tick < a.endTick
+}
+
 export function FlowView({
   midi,
   notes,
@@ -109,7 +115,7 @@ export function FlowView({
     for (const note of displayNotes) {
       const placement = placements.get(note.id)
       if (!placement) continue
-      const key = `${note.tick}:${placement.fret}`
+      const key = String(placement.fret)
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push(note)
     }
@@ -120,19 +126,66 @@ export function FlowView({
       const sorted = [...group].sort((a, b) => {
         const aPlacement = placements.get(a.id)!
         const bPlacement = placements.get(b.id)!
-        return bPlacement.stringIndex - aPlacement.stringIndex || a.midi - b.midi
+        return a.tick - b.tick || bPlacement.stringIndex - aPlacement.stringIndex || a.midi - b.midi
       })
-      sorted.forEach((note, index) => {
-        splits.set(note.id, { index, count: sorted.length })
+      const lanes: number[] = []
+      const laneByNote = new Map<string, number>()
+
+      for (const note of sorted) {
+        let laneIndex = lanes.findIndex((endTick) => endTick <= note.tick)
+        if (laneIndex === -1) {
+          laneIndex = lanes.length
+          lanes.push(note.endTick)
+        } else {
+          lanes[laneIndex] = note.endTick
+        }
+        laneByNote.set(note.id, laneIndex)
+      }
+
+      sorted.forEach((note) => {
+        const laneIndex = laneByNote.get(note.id) ?? 0
+        const overlapping = sorted.filter((other) => notesOverlap(note, other))
+        const laneCount =
+          Math.max(
+            laneIndex,
+            ...overlapping.map((other) => laneByNote.get(other.id) ?? 0),
+          ) + 1
+        if (laneCount > 1) splits.set(note.id, { index: laneIndex, count: laneCount })
       })
     }
     return splits
   }, [displayNotes, placements])
-  const notesNearTick = useMemo(() => {
+  const noteOverlapAtTick = useMemo(() => {
     const tolerance = Math.max(1, measureTicks / 64)
-    return (tick: number) =>
-      displayNotes.some((note) => note.tick <= tick + tolerance && note.endTick >= tick - tolerance)
+    return (tick: number) => displayNotes.filter((note) => note.tick <= tick + tolerance && note.endTick >= tick - tolerance)
   }, [displayNotes, measureTicks])
+  const chordPlacementAtTick = useMemo(() => {
+    return (tick: number): ChordPlacement => {
+      const activeNotes = noteOverlapAtTick(tick)
+      if (!activeNotes.length) return 'center'
+
+      const centers = activeNotes
+        .map((note) => {
+          if (viewMode === 'piano') {
+            const slot = pianoKeySlot(note.midi, pianoRange)
+            return slot.left + slot.width / 2
+          }
+
+          const placement = placements.get(note.id)
+          if (!placement) return null
+          const slot = fretSlot(placement, maxFret)
+          const split = guitarLaneSplits.get(note.id)
+          const splitLeft = split ? slot.left + (slot.width * split.index) / split.count : slot.left
+          const splitWidth = split ? slot.width / split.count : slot.width
+          return ((splitLeft + splitWidth / 2) / FRETBOARD_VIEW_WIDTH) * 100
+        })
+        .filter((value): value is number => value !== null)
+
+      if (!centers.length) return 'center'
+      const averageCenter = centers.reduce((sum, center) => sum + center, 0) / centers.length
+      return averageCenter > 54 ? 'left' : 'right'
+    }
+  }, [guitarLaneSplits, maxFret, noteOverlapAtTick, pianoRange, placements, viewMode])
   const measureMarkers = useMemo(() => {
     const count = Math.max(1, Math.ceil(midi.durationTicks / measureTicks))
     return Array.from({ length: count }).map((_, index) => {
@@ -146,10 +199,10 @@ export function FlowView({
         lineTop: timelineTop(midi, startTime, pixelsPerSecond),
         height: Math.max(1, timelineTop(midi, startTime, pixelsPerSecond) - timelineTop(midi, endTime, pixelsPerSecond)),
         marker: activeMarkerAtTick(markers, startTick),
-        hasNotesAtLine: notesNearTick(startTick),
+        chordPlacement: chordPlacementAtTick(startTick),
       }
     })
-  }, [markers, measureTicks, midi, notesNearTick, pixelsPerSecond])
+  }, [chordPlacementAtTick, markers, measureTicks, midi, pixelsPerSecond])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -210,7 +263,12 @@ export function FlowView({
   }
 
   return (
-    <section className="flow-panel" aria-label="Scrollable falling MIDI notes" data-playing={isPlaying}>
+    <section
+      className="flow-panel"
+      aria-label="Scrollable falling MIDI notes"
+      data-playing={isPlaying}
+      data-view-mode={viewMode}
+    >
       <div className="panel-mini-header">
         <span>MIDI</span>
         <strong>{marker?.text || '-'}</strong>
@@ -261,7 +319,7 @@ export function FlowView({
             {measureMarkers.map((measure) => (
               <div
                 key={`line-${measure.index}`}
-                className={`falling-barline ${measure.hasNotesAtLine ? 'has-midi-overlap' : ''}`}
+                className={`falling-barline chord-${measure.chordPlacement}`}
                 style={{ top: measure.lineTop }}
               >
                 <span>{measure.index + 1}</span>
@@ -273,7 +331,7 @@ export function FlowView({
               .map((event) => (
                 <div
                   key={`${event.tick}-${event.text}`}
-                  className={`falling-mid-chord ${notesNearTick(event.tick) ? 'has-midi-overlap' : ''}`}
+                  className={`falling-mid-chord chord-${chordPlacementAtTick(event.tick)}`}
                   style={{ top: timelineTop(midi, event.time, pixelsPerSecond) }}
                 >
                   <span>{measureNumberForTick(event.tick, measureTicks)}</span>
@@ -323,7 +381,7 @@ export function FlowView({
                   data-key-kind={keyKind}
                   style={{
                     left: `${x}%`,
-                    width: viewMode === 'piano' ? `${width}%` : `max(8px, ${width}%)`,
+                    width: `${width}%`,
                     top: y,
                     height,
                     borderColor,
