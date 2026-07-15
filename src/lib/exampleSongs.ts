@@ -1,4 +1,5 @@
 import { parseMidiFile, type ParsedMidi } from './midi'
+import { OFFLINE_BUILD } from './buildMode'
 
 export type ExampleSongEntry = {
   id: string
@@ -33,6 +34,15 @@ type JsDelivrFileItem = {
 
 type JsDelivrFlatList = {
   files?: unknown
+}
+
+type LocalExampleSong = {
+  name?: unknown
+  size?: unknown
+}
+
+type LocalExampleSongManifest = {
+  songs?: unknown
 }
 
 function titleFromFileName(name: string) {
@@ -114,7 +124,32 @@ async function loadJsDelivrDirectory(): Promise<ExampleSongEntry[]> {
   })
 }
 
+async function loadLocalExampleSongs(): Promise<ExampleSongEntry[]> {
+  const response = await fetch(`${import.meta.env.BASE_URL}example-songs.json`, { cache: 'no-cache' })
+  if (!response.ok) throw new Error('Could not load the offline example-song library.')
+
+  const value = (await response.json()) as LocalExampleSongManifest
+  if (!Array.isArray(value.songs)) return []
+
+  return value.songs.flatMap((item): ExampleSongEntry[] => {
+    if (!item || typeof item !== 'object') return []
+    const candidate = item as LocalExampleSong
+    if (typeof candidate.name !== 'string' || !isMidiFileName(candidate.name)) return []
+
+    return [
+      {
+        id: `offline:${candidate.name}`,
+        title: titleFromFileName(candidate.name),
+        url: `${import.meta.env.BASE_URL}${encodePath(`${EXAMPLE_FOLDER_NAME}/${candidate.name}`)}`,
+        size: typeof candidate.size === 'number' ? candidate.size : undefined,
+      },
+    ]
+  })
+}
+
 export async function loadExampleSongs() {
+  if (OFFLINE_BUILD) return loadLocalExampleSongs()
+
   const directories = await Promise.all([
     ...EXAMPLE_SONG_DIRECTORIES.map((url) => loadGitHubDirectory(url)),
     loadJsDelivrDirectory(),

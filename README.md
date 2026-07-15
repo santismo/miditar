@@ -48,6 +48,14 @@ Build:
 npm run build
 ```
 
+Build the checked-in, self-contained iPhone/SPCK edition:
+
+```bash
+npm run build:offline
+```
+
+The generated `miditar-offline/` folder has relative asset paths, a local manifest of all example songs, synth-only playback, and a service worker that precaches the app and MIDI library. See [MIDITAR_OFFLINE_SPCK.md](MIDITAR_OFFLINE_SPCK.md) for iPhone setup and offline-use instructions.
+
 Lint:
 
 ```bash
