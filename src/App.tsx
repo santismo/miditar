@@ -28,6 +28,7 @@ import {
 } from './lib/midi'
 import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
 import { pianoRangeForNotes } from './lib/pianoLayout'
+import { OFFLINE_BUILD } from './lib/buildMode'
 import {
   DEFAULT_STRING_CHANNEL_MAP,
   STRING_CHANNEL_PRESETS,
@@ -81,6 +82,7 @@ type ShortcutActions = {
 }
 const TRACK_SLOT_LABELS = ['Primary Track', 'Secondary Track', 'Bass Track']
 const BUILT_IN_DEMO_EXAMPLE = '__demo__'
+const APP_NAME = OFFLINE_BUILD ? 'Miditar Offline' : 'Miditar'
 const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
   'sample:guitar-acoustic',
   'sample:guitar-nylon',
@@ -161,6 +163,7 @@ function instrumentsForViewMode(viewMode: InstrumentViewMode) {
 }
 
 function defaultInstrumentForViewMode(viewMode: InstrumentViewMode): PlaybackInstrumentId {
+  if (OFFLINE_BUILD) return 'synth'
   return viewMode === 'piano' ? 'sample:piano' : 'sample:guitar-acoustic'
 }
 
@@ -195,7 +198,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     desktopSizing ? DESKTOP_DEFAULT_INSTRUMENT_HEIGHT : DEFAULT_INSTRUMENT_HEIGHT,
   )
   const [playbackInstrumentId, setPlaybackInstrumentId] =
-    useState<PlaybackInstrumentId>('sample:guitar-acoustic')
+    useState<PlaybackInstrumentId>(() => defaultInstrumentForViewMode('guitar'))
   const [fretboardTheme, setFretboardTheme] = useState<FretboardThemeId>('dark')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
@@ -1006,11 +1009,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     return (
       <div className="app-shell desktop-shell" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
         <header className="desktop-header">
-          <div className="brand" aria-label="Miditar">
+          <div className="brand" aria-label={APP_NAME}>
             <div className="brand-mark">
               <Guitar size={23} strokeWidth={2.2} />
             </div>
-            <h1>Miditar</h1>
+            <h1>{APP_NAME}</h1>
           </div>
 
           <div className="desktop-song-summary">
@@ -1052,7 +1055,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               <label className="field">
                 <span>
                   <FileMusic size={15} />
-                  Load Example Song
+                  {OFFLINE_BUILD ? 'Local Example Song' : 'Load Example Song'}
                 </span>
                 <div className="select-action-row">
                   <select
@@ -1060,7 +1063,9 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     disabled={exampleLoading}
                     onChange={(event) => void chooseExampleSong(event.target.value)}
                   >
-                    <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
+                    <option value="">
+                      {exampleLoading ? 'Loading...' : OFFLINE_BUILD ? 'Choose local example...' : 'Choose example...'}
+                    </option>
                     <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
                     {exampleSongs.map((entry) => (
                       <option key={entry.id} value={entry.id}>
@@ -1376,11 +1381,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       onDragOver={(event) => event.preventDefault()}
     >
       <header className="app-header">
-        <div className="brand" aria-label="Miditar">
+        <div className="brand" aria-label={APP_NAME}>
           <div className="brand-mark">
             <Guitar size={23} strokeWidth={2.2} />
           </div>
-          <h1>Miditar</h1>
+          <h1>{APP_NAME}</h1>
         </div>
 
         <div className="song-heading">
@@ -1439,7 +1444,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             <label className="field">
               <span>
                 <FileMusic size={15} />
-                Load Example Song
+                {OFFLINE_BUILD ? 'Local Example Song' : 'Load Example Song'}
               </span>
               <div className="select-action-row">
                 <select
@@ -1447,7 +1452,9 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                   disabled={exampleLoading}
                   onChange={(event) => void chooseExampleSong(event.target.value)}
                 >
-                  <option value="">{exampleLoading ? 'Loading...' : 'Choose example...'}</option>
+                  <option value="">
+                    {exampleLoading ? 'Loading...' : OFFLINE_BUILD ? 'Choose local example...' : 'Choose example...'}
+                  </option>
                   <option value={BUILT_IN_DEMO_EXAMPLE}>Built-in Demo</option>
                   {exampleSongs.map((entry) => (
                     <option key={entry.id} value={entry.id}>

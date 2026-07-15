@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:offline": "node scripts/generate-example-song-manifest.mjs && tsc -b && vite build --mode offline --outDir miditar-offline --emptyOutDir",
     "lint": "oxlint",
     "preview": "vite preview"
   },

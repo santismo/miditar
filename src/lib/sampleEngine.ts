@@ -1,3 +1,5 @@
+import { OFFLINE_BUILD } from './buildMode'
+
 export type PlaybackInstrumentId =
   | 'synth'
   | 'sample:guitar-acoustic'
@@ -90,14 +92,16 @@ const TONE_SAMPLE_MAPS: Record<Exclude<PlaybackInstrumentId, 'synth'>, { instrum
   },
 }
 
-export const PLAYBACK_INSTRUMENTS: PlaybackInstrument[] = [
-  { id: 'sample:guitar-acoustic', label: 'Acoustic Guitar' },
-  { id: 'sample:guitar-nylon', label: 'Nylon Guitar' },
-  { id: 'sample:guitar-electric', label: 'Electric Guitar' },
-  { id: 'sample:bass-electric', label: 'Electric Bass' },
-  { id: 'sample:piano', label: 'Piano' },
-  { id: 'synth', label: 'Synth' },
-]
+export const PLAYBACK_INSTRUMENTS: PlaybackInstrument[] = OFFLINE_BUILD
+  ? [{ id: 'synth', label: 'Offline Synth' }]
+  : [
+      { id: 'sample:guitar-acoustic', label: 'Acoustic Guitar' },
+      { id: 'sample:guitar-nylon', label: 'Nylon Guitar' },
+      { id: 'sample:guitar-electric', label: 'Electric Guitar' },
+      { id: 'sample:bass-electric', label: 'Electric Bass' },
+      { id: 'sample:piano', label: 'Piano' },
+      { id: 'synth', label: 'Synth' },
+    ]
 
 function toneNoteToMidi(note: string) {
   const match = note.match(/^([A-G])(#?)(-?\d+)$/)
@@ -294,7 +298,7 @@ export class SamplePlaybackEngine {
 }
 
 export function isSampleInstrument(id: PlaybackInstrumentId): id is Exclude<PlaybackInstrumentId, 'synth'> {
-  return id !== 'synth'
+  return !OFFLINE_BUILD && id !== 'synth'
 }
 
 export function playbackInstrumentLabel(id: PlaybackInstrumentId) {

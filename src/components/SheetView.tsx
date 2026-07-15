@@ -23,7 +23,7 @@ type Measure = {
   markers: MidiMarker[]
 }
 
-type VexflowModule = typeof import('vexflow')
+type VexflowModule = typeof import('vexflow/bravura')
 type VexStaveNote = InstanceType<VexflowModule['StaveNote']>
 type ClefName = 'treble' | 'bass'
 type VexDurationName = 'w' | 'h' | 'q' | '8' | '16' | '32'
@@ -222,7 +222,7 @@ function MeasureNotation({
     node.innerHTML = ''
     let cancelled = false
 
-    void import('vexflow').then((Vex) => {
+    void import('vexflow/bravura').then((Vex) => {
       if (cancelled) return
       try {
         const renderer = new Vex.Renderer(node, Vex.Renderer.Backends.SVG)

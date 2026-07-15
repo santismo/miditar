@@ -29,14 +29,14 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build app
-        run: npm run build
+      - name: Build offline app
+        run: npm run build:offline
 
       - name: Create ZIP
         run: |
-          cd dist
+          cd miditar-offline
           zip -r ../miditar-dist.zip .
 
       - name: Upload offline ZIP
