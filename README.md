@@ -11,7 +11,7 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Open one or more MIDI, Guitar Pro (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`), or MusicXML (`.musicxml`, `.mxl`, `.xml`) files.
 - Guitar Pro imports retain authored string/fret choices for the tab, falling notes, fretboard, auditioning, and export, with a switch to fall back to Miditar's smart mapping.
 - Automatically generates chord markers when a file does not contain them, with a command to reanalyze only the selected tracks.
-- Separate open-license Guitar, Piano/Ragtime, and Video Game catalog loaders, each with its own random-song button and links to browse the upstream collections.
+- Searchable Guitar, Piano/Ragtime, and Video Game collection browser with 5,500+ indexed files, source filters, pagination, and random selection from a whole category or the current search results.
 - Dark mode by default.
 - Remembers the most recently loaded MIDI files in the current browser.
 - Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, instrument height, export, and visual theme.
@@ -29,6 +29,7 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, string-colored guitar notes, overlap-aware split same-fret lanes, and a playhead at the fretboard edge.
 - Live guitar fretboard with selectable visual themes, or live piano keyboard in piano mode, with adjustable instrument height.
 - Mobile-friendly three-view layout: sheet strip, falling notes, and instrument view stay visible together.
+- Optional performance layout hides the sheet/tab strip so the falling MIDI and fretboard/piano fill the screen, with a one-tap iPhone landscape view and dedicated landscape sizing.
 - Playback from the header with tick-synced manual scrubbing from the sheet or falling-note views.
 - Safari and mobile browser install metadata with Miditar app icons matching the header logo.
 - Guitar mapping for standard tuning: E4, B3, G3, D3, A2, E2.
@@ -58,6 +59,12 @@ Build the checked-in, self-contained iPhone/SPCK edition:
 npm run build:offline
 ```
 
+Refresh the checked-in catalog index from the connected upstream collections:
+
+```bash
+npm run refresh:catalogs
+```
+
 The generated `miditar-offline/` folder has relative asset paths, a local manifest of all example songs, synth-only playback, and a service worker that precaches the app and MIDI library. See [MIDITAR_OFFLINE_SPCK.md](MIDITAR_OFFLINE_SPCK.md) for iPhone setup and offline-use instructions.
 
 Lint:
@@ -72,13 +79,15 @@ Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branc
 
 ## Connected music sources
 
-The built-in loaders intentionally use small, openly licensed catalogs and show their source/license in the UI:
+The catalog index is generated from the upstream collections and is searched locally in the browser:
 
-- Guitar MIDI: [ClassTab](https://github.com/baweaver/classtab) (MIT collection; selected public-domain compositions).
-- Piano and ragtime MusicXML: [MuseTrainer public-domain library](https://github.com/musetrainer/library).
-- Video-game-style MIDI cues: [e_midi](https://github.com/davehorner/e_midi/tree/develop/e_midi/midi) (CC0 1.0).
+- 1,046 classical-guitar MIDIs from [ClassTab](https://github.com/baweaver/classtab).
+- 69 public-domain MusicXML scores from [MuseTrainer](https://github.com/musetrainer/library).
+- 235 quantized classical piano scores and 1,067 expressive performances from the [ASAP dataset](https://github.com/fosfrancesco/asap-dataset) (CC BY-NC-SA 4.0).
+- 15 openly licensed cues from [e_midi](https://github.com/davehorner/e_midi/tree/develop/e_midi/midi) (MIT).
+- 3,142 files from the [Community Game MIDI Archive](https://github.com/ryanrudes/game-midis). This archive is downloaded once, indexed in-browser, and individual selections are extracted as needed; rights vary, so the UI labels it for personal playback.
 
-Browse links also point to ClassTab, Songsterr, Ultimate Guitar's Guitar Pro catalog, Mutopia, VGMusic, and OpenGameArt. Those sites stay external so their own download, attribution, and redistribution terms remain visible to the user.
+Browse links also point to Songsterr, Ultimate Guitar's Guitar Pro catalog, Mutopia, VGMusic, and OpenGameArt. VGMusic remains external because its site explicitly prohibits direct links to individual music files.
 
 ## MIDI Notes
 
