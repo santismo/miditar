@@ -14,9 +14,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@coderline/alphatab": "^1.8.4",
     "lucide-react": "^1.22.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "spessasynth_lib": "^4.3.10",
     "three": "^0.185.1",
     "tone": "^15.1.22",
     "vexflow": "^5.0.0"
@@ -30,6 +32,7 @@
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "vite-plugin-static-copy": "^4.1.1"
   }
 }

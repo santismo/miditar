@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -32,6 +33,15 @@ export default defineConfig(({ mode }) => {
     base: offline ? './' : '/miditar/',
     plugins: [
       react(),
+      viteStaticCopy({
+        targets: [
+          {
+            src: 'node_modules/spessasynth_lib/dist/spessasynth_processor.min.js',
+            dest: '.',
+            rename: { stripBase: true },
+          },
+        ],
+      }),
       ...(offline ? [offlineHtml()] : []),
       VitePWA({
         registerType: 'autoUpdate',
@@ -69,6 +79,7 @@ export default defineConfig(({ mode }) => {
                 {
                   urlPattern: ({ url }) =>
                     url.origin === 'https://cdn.jsdelivr.net' ||
+                    url.origin === 'https://raw.githubusercontent.com' ||
                     (url.origin === 'https://api.github.com' && url.pathname.includes('/repos/santismo/miditar/')),
                   handler: 'StaleWhileRevalidate',
                   options: {

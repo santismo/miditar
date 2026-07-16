@@ -19,6 +19,8 @@ export type MidiMarker = {
   time: number
   text: string
   type: 'marker' | 'lyric' | 'text'
+  source?: 'file' | 'analysis'
+  confidence?: number
 }
 
 export type TempoEvent = {
@@ -64,6 +66,8 @@ export type ParsedMidi = {
   keySignatures: KeySignatureEvent[]
   markers: MidiMarker[]
   tracks: MidiTrack[]
+  sourceFormat?: 'midi' | 'guitar-pro' | 'musicxml'
+  exactPlacements?: MidiPlacement[]
 }
 
 export type MidiPlacement = {
@@ -309,6 +313,7 @@ export function parseMidiFile(buffer: ArrayBuffer, fileName = 'Untitled.mid'): P
               tick,
               text,
               type: metaType === 0x06 ? 'marker' : metaType === 0x05 ? 'lyric' : 'text',
+              source: 'file',
             })
           }
         } else if (metaType === 0x51 && payload.length >= 3) {
@@ -437,6 +442,7 @@ export function parseMidiFile(buffer: ArrayBuffer, fileName = 'Untitled.mid'): P
       .map((marker) => ({ ...marker, time: ticksToSeconds(marker.tick, tempos, ppq) }))
       .sort((a, b) => a.tick - b.tick),
     tracks,
+    sourceFormat: 'midi',
   }
 }
 

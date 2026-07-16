@@ -2,11 +2,14 @@ import { OFFLINE_BUILD } from './buildMode'
 
 export type PlaybackInstrumentId =
   | 'synth'
+  | 'soundfont:custom'
   | 'sample:guitar-acoustic'
   | 'sample:guitar-nylon'
   | 'sample:guitar-electric'
   | 'sample:bass-electric'
   | 'sample:piano'
+
+export type SampleInstrumentId = Exclude<PlaybackInstrumentId, 'synth' | 'soundfont:custom'>
 
 export type PlaybackInstrument = {
   id: PlaybackInstrumentId
@@ -26,7 +29,7 @@ type SampleVoice = {
 
 const TONE_SAMPLE_BASE_URL = 'https://nbrosowsky.github.io/tonejs-instruments/samples/'
 
-const TONE_SAMPLE_MAPS: Record<Exclude<PlaybackInstrumentId, 'synth'>, { instrument: string; map: SampleMap }> = {
+const TONE_SAMPLE_MAPS: Record<SampleInstrumentId, { instrument: string; map: SampleMap }> = {
   'sample:guitar-acoustic': {
     instrument: 'guitar-acoustic',
     map: {
@@ -93,13 +96,17 @@ const TONE_SAMPLE_MAPS: Record<Exclude<PlaybackInstrumentId, 'synth'>, { instrum
 }
 
 export const PLAYBACK_INSTRUMENTS: PlaybackInstrument[] = OFFLINE_BUILD
-  ? [{ id: 'synth', label: 'Offline Synth' }]
+  ? [
+      { id: 'synth', label: 'Offline Synth' },
+      { id: 'soundfont:custom', label: 'Custom SoundFont' },
+    ]
   : [
       { id: 'sample:guitar-acoustic', label: 'Acoustic Guitar' },
       { id: 'sample:guitar-nylon', label: 'Nylon Guitar' },
       { id: 'sample:guitar-electric', label: 'Electric Guitar' },
       { id: 'sample:bass-electric', label: 'Electric Bass' },
       { id: 'sample:piano', label: 'Piano' },
+      { id: 'soundfont:custom', label: 'Custom SoundFont' },
       { id: 'synth', label: 'Synth' },
     ]
 
@@ -144,7 +151,7 @@ class ToneSampleInstrument {
 
   constructor(
     context: AudioContext,
-    id: Exclude<PlaybackInstrumentId, 'synth'>,
+    id: SampleInstrumentId,
     onProgress?: (loaded: number, total: number) => void,
   ) {
     this.context = context
@@ -220,14 +227,14 @@ class ToneSampleInstrument {
 
 export class SamplePlaybackEngine {
   readonly context: AudioContext
-  private readonly instruments = new Map<Exclude<PlaybackInstrumentId, 'synth'>, Promise<ToneSampleInstrument>>()
+  private readonly instruments = new Map<SampleInstrumentId, Promise<ToneSampleInstrument>>()
   private readonly activeVoices = new Map<string, SampleVoice>()
 
   constructor(context: AudioContext) {
     this.context = context
   }
 
-  async load(id: Exclude<PlaybackInstrumentId, 'synth'>, onProgress?: (loaded: number, total: number) => void) {
+  async load(id: SampleInstrumentId, onProgress?: (loaded: number, total: number) => void) {
     let promise = this.instruments.get(id)
     if (!promise) {
       promise = Promise.resolve(new ToneSampleInstrument(this.context, id, onProgress)).then(async (instrument) => {
@@ -240,7 +247,7 @@ export class SamplePlaybackEngine {
   }
 
   async triggerAttackRelease(
-    instrumentId: Exclude<PlaybackInstrumentId, 'synth'>,
+    instrumentId: SampleInstrumentId,
     voiceId: string,
     midi: number,
     time: number,
@@ -252,7 +259,7 @@ export class SamplePlaybackEngine {
   }
 
   async triggerAttack(
-    instrumentId: Exclude<PlaybackInstrumentId, 'synth'>,
+    instrumentId: SampleInstrumentId,
     voiceId: string,
     midi: number,
     time: number,
@@ -297,8 +304,8 @@ export class SamplePlaybackEngine {
   }
 }
 
-export function isSampleInstrument(id: PlaybackInstrumentId): id is Exclude<PlaybackInstrumentId, 'synth'> {
-  return !OFFLINE_BUILD && id !== 'synth'
+export function isSampleInstrument(id: PlaybackInstrumentId): id is SampleInstrumentId {
+  return !OFFLINE_BUILD && id !== 'synth' && id !== 'soundfont:custom'
 }
 
 export function playbackInstrumentLabel(id: PlaybackInstrumentId) {
