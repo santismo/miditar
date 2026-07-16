@@ -1,6 +1,25 @@
 import { type CSSProperties, type DragEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import type JSZip from 'jszip'
 import * as Tone from 'tone'
-import { Dices, Download, FileMusic, FolderOpen, Guitar, Palette, Pause, Play, Settings, X } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Dices,
+  Download,
+  Eye,
+  EyeOff,
+  FileMusic,
+  FolderOpen,
+  Guitar,
+  LibraryBig,
+  Palette,
+  Pause,
+  Play,
+  RectangleHorizontal,
+  Search,
+  Settings,
+  X,
+} from 'lucide-react'
 import './App.css'
 import { FlowView } from './components/FlowView'
 import { Fretboard } from './components/Fretboard'
@@ -51,12 +70,17 @@ import {
 import { SoundFontPlaybackEngine } from './lib/soundFontEngine'
 import { loadStoredSoundFont, removeStoredSoundFont, saveStoredSoundFont } from './lib/soundFontStore'
 import {
-  entriesForCategory,
   MUSIC_LIBRARY_LABELS,
   MUSIC_LIBRARY_SOURCES,
   type MusicLibraryCategory,
-  type MusicLibraryEntry,
 } from './lib/musicLibrary'
+import {
+  fallbackMusicCatalog,
+  flattenMusicCatalog,
+  loadMusicCatalog,
+  type MusicCatalogEntry,
+  type MusicCatalogManifest,
+} from './lib/musicCatalog'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 const DEMO_SONG = createDemoMidi()
@@ -72,6 +96,7 @@ const DEFAULT_INSTRUMENT_HEIGHT = 16
 const DESKTOP_DEFAULT_INSTRUMENT_HEIGHT = 22
 const MIN_INSTRUMENT_HEIGHT = 12
 const MAX_INSTRUMENT_HEIGHT = 30
+const CATALOG_PAGE_SIZE = 50
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -86,6 +111,10 @@ type ScrubVoice =
 type InstrumentViewMode = 'guitar' | 'piano'
 type NotationViewMode = 'tab' | 'sheet'
 type GuitarNeckDisplayMode = 'flat' | 'rocksmith'
+type CatalogCategory = MusicLibraryCategory | 'all'
+type LockableScreenOrientation = ScreenOrientation & {
+  lock?: (orientation: 'landscape') => Promise<void>
+}
 type AppVariant = 'mobile' | 'desktop'
 type AppProps = {
   variant?: AppVariant
@@ -202,6 +231,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [tempoBpm, setTempoBpm] = useState(() => songTempoBpm(DEMO_SONG))
   const [instrumentViewMode, setInstrumentViewMode] = useState<InstrumentViewMode>('guitar')
   const [notationViewMode, setNotationViewMode] = useState<NotationViewMode>('tab')
+  const [showNotation, setShowNotation] = useState(true)
   const [guitarNeckDisplayMode, setGuitarNeckDisplayMode] = useState<GuitarNeckDisplayMode>('flat')
   const [smartGuitarMode, setSmartGuitarMode] = useState(true)
   const [smartGuitarMelody, setSmartGuitarMelody] = useState(true)
@@ -228,6 +258,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     'video-game': '',
   })
   const [libraryLoadingId, setLibraryLoadingId] = useState('')
+  const [catalogManifest, setCatalogManifest] = useState<MusicCatalogManifest | null>(null)
+  const [catalogEntries, setCatalogEntries] = useState<MusicCatalogEntry[]>(() => fallbackMusicCatalog())
+  const [catalogOpenCategory, setCatalogOpenCategory] = useState<CatalogCategory | null>(null)
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [catalogSourceId, setCatalogSourceId] = useState('all')
+  const [catalogPage, setCatalogPage] = useState(0)
+  const [catalogActivity, setCatalogActivity] = useState('')
+  const [landscapeMessage, setLandscapeMessage] = useState('')
   const [exampleSongs, setExampleSongs] = useState<ExampleSongEntry[]>([])
   const [exampleLoading, setExampleLoading] = useState(false)
   const [recentMidiFiles, setRecentMidiFiles] = useState<RecentMidiFile[] | null>(null)
@@ -237,6 +275,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const sampleEngineRef = useRef<SamplePlaybackEngine | null>(null)
   const soundFontEngineRef = useRef<SoundFontPlaybackEngine | null>(null)
   const soundFontBufferRef = useRef<ArrayBuffer | null>(null)
+  const archiveRef = useRef<{ url: string; zip: JSZip } | null>(null)
   const playOffsetRef = useRef(0)
   const playStartedAtRef = useRef(0)
   const playbackRunRef = useRef(0)
@@ -336,6 +375,30 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   ])
   const currentChord = currentMarkerText(song, currentTime)
   const connectedFlightMode = instrumentViewMode === 'guitar' && guitarNeckDisplayMode === 'rocksmith'
+  const catalogCounts = useMemo(() => {
+    const counts: Record<MusicLibraryCategory, number> = { guitar: 0, piano: 0, 'video-game': 0 }
+    for (const entry of catalogEntries) counts[entry.category] += 1
+    return counts
+  }, [catalogEntries])
+  const activeCatalogSources = useMemo(() => {
+    const sources = catalogManifest?.sources ?? []
+    if (!catalogOpenCategory || catalogOpenCategory === 'all') return sources
+    return sources.filter((source) => source.category === catalogOpenCategory)
+  }, [catalogManifest, catalogOpenCategory])
+  const filteredCatalogEntries = useMemo(() => {
+    const query = catalogQuery.trim().toLowerCase()
+    return catalogEntries.filter((entry) => {
+      if (catalogOpenCategory && catalogOpenCategory !== 'all' && entry.category !== catalogOpenCategory) return false
+      if (catalogSourceId !== 'all' && entry.sourceId !== catalogSourceId) return false
+      if (!query) return true
+      return `${entry.title} ${entry.subtitle} ${entry.sourceName} ${entry.path}`.toLowerCase().includes(query)
+    })
+  }, [catalogEntries, catalogOpenCategory, catalogQuery, catalogSourceId])
+  const catalogPageCount = Math.max(1, Math.ceil(filteredCatalogEntries.length / CATALOG_PAGE_SIZE))
+  const visibleCatalogEntries = filteredCatalogEntries.slice(
+    catalogPage * CATALOG_PAGE_SIZE,
+    (catalogPage + 1) * CATALOG_PAGE_SIZE,
+  )
 
   useEffect(() => {
     if (!song) return
@@ -359,6 +422,16 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       })
       .finally(() => {
         if (!cancelled) setExampleLoading(false)
+      })
+
+    void loadMusicCatalog()
+      .then((manifest) => {
+        if (cancelled) return
+        setCatalogManifest(manifest)
+        setCatalogEntries(flattenMusicCatalog(manifest))
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogActivity('Full catalog unavailable; showing the built-in fallback list.')
       })
 
     void loadRecentMidiState()
@@ -394,6 +467,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    setCatalogPage(0)
+  }, [catalogOpenCategory, catalogQuery, catalogSourceId])
 
   useEffect(() => {
     if (playbackInstruments.some((instrument) => instrument.id === playbackInstrumentId)) return
@@ -805,16 +882,41 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     }
   }
 
-  async function loadLibraryEntry(entry: MusicLibraryEntry) {
+  async function readCatalogEntry(entry: MusicCatalogEntry) {
+    if (entry.delivery === 'direct') {
+      if (!entry.url) throw new Error(`${entry.sourceName} did not provide a download URL.`)
+      const response = await fetch(entry.url)
+      if (!response.ok) throw new Error(`The ${entry.sourceName} source returned ${response.status}.`)
+      return response.arrayBuffer()
+    }
+
+    if (!entry.archiveUrl) throw new Error(`${entry.sourceName} did not provide an archive URL.`)
+    let loadedArchive = archiveRef.current
+    if (!loadedArchive || loadedArchive.url !== entry.archiveUrl) {
+      setCatalogActivity('Downloading and indexing the game archive (about 12 MB)...')
+      const response = await fetch(entry.archiveUrl)
+      if (!response.ok) throw new Error(`The ${entry.sourceName} archive returned ${response.status}.`)
+      const { default: Zip } = await import('jszip')
+      const zip = await Zip.loadAsync(await response.arrayBuffer())
+      loadedArchive = { url: entry.archiveUrl, zip }
+      archiveRef.current = loadedArchive
+    }
+
+    const archivedFile = loadedArchive.zip.file(entry.path)
+    if (!archivedFile) throw new Error(`${entry.fileName} was not found in the downloaded game archive.`)
+    setCatalogActivity(`Opening ${entry.title}...`)
+    return archivedFile.async('arraybuffer')
+  }
+
+  async function loadLibraryEntry(entry: MusicCatalogEntry) {
     stopPlayback()
     releaseAllScrubAudition()
     setError('')
     setLibraryLoadingId(entry.id)
+    setCatalogActivity(`Loading ${entry.title}...`)
 
     try {
-      const response = await fetch(entry.url)
-      if (!response.ok) throw new Error(`The ${entry.sourceName} source returned ${response.status}.`)
-      const buffer = await response.arrayBuffer()
+      const buffer = await readCatalogEntry(entry)
       const loadedSong = withAnalyzedChordMarkers(await parseSupportedMusicFile(buffer.slice(0), entry.fileName))
       const loadedFile: RecentMidiFile = {
         name: entry.fileName,
@@ -831,29 +933,57 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       setCurrentTime(0)
       setTempoBpm(songTempoBpm(loadedSong))
       setSettingsOpen(false)
+      setCatalogOpenCategory(null)
+      setCatalogActivity(`Loaded ${entry.title} from ${entry.sourceName}.`)
       void saveRecentMidiState({ files: [loadedFile], songIndex: 0 })
     } catch (err) {
       setError(err instanceof Error ? err.message : `Could not load ${entry.title}.`)
+      setCatalogActivity('')
     } finally {
       setLibraryLoadingId('')
     }
   }
 
-  function chooseLibrarySong(category: MusicLibraryCategory, id: string) {
-    setLibrarySelection((current) => ({ ...current, [category]: id }))
-    const entry = entriesForCategory(category).find((candidate) => candidate.id === id)
-    if (entry) void loadLibraryEntry(entry)
+  function openMusicCatalog(category: CatalogCategory) {
+    setCatalogOpenCategory(category)
+    setCatalogQuery('')
+    setCatalogSourceId('all')
+    setCatalogPage(0)
+    setCatalogActivity('')
+    setSettingsOpen(false)
   }
 
   function chooseRandomLibrarySong(category: MusicLibraryCategory) {
     if (libraryLoadingId) return
-    const entries = entriesForCategory(category)
+    const entries = catalogEntries.filter((entry) => entry.category === category)
     const currentId = librarySelection[category]
     const choices = entries.length > 1 ? entries.filter((entry) => entry.id !== currentId) : entries
     const entry = choices[Math.floor(Math.random() * choices.length)]
     if (!entry) return
     setLibrarySelection((current) => ({ ...current, [category]: entry.id }))
     void loadLibraryEntry(entry)
+  }
+
+  function chooseRandomCatalogResult() {
+    if (libraryLoadingId || !filteredCatalogEntries.length) return
+    const entry = filteredCatalogEntries[Math.floor(Math.random() * filteredCatalogEntries.length)]
+    if (!entry) return
+    setLibrarySelection((current) => ({ ...current, [entry.category]: entry.id }))
+    void loadLibraryEntry(entry)
+  }
+
+  async function enterLandscapePerformanceView() {
+    setShowNotation(false)
+    setSettingsOpen(false)
+    setLandscapeMessage('Rotate your iPhone sideways for the expanded performance view.')
+    const orientation = window.screen.orientation as LockableScreenOrientation | undefined
+    if (!orientation?.lock) return
+    try {
+      await orientation.lock('landscape')
+      setLandscapeMessage('Landscape performance view enabled.')
+    } catch {
+      // iPhone Safari currently relies on the device rotation setting instead of orientation.lock().
+    }
   }
 
   async function loadSoundFontFile(file: File) {
@@ -1082,16 +1212,20 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   }
 
   function renderMusicLibrary() {
+    const total = catalogEntries.length
     return (
       <div className="music-library-loaders">
+        <button type="button" className="button secondary library-search-button" onClick={() => openMusicCatalog('all')}>
+          <Search size={17} />
+          Search all {total.toLocaleString()} songs
+        </button>
         {MUSIC_LIBRARY_CATEGORIES.map((category) => {
-          const entries = entriesForCategory(category)
-          const selected = entries.find((entry) => entry.id === librarySelection[category])
           const loading = Boolean(libraryLoadingId)
           return (
-            <label className="field library-loader" key={category}>
+            <section className="library-loader" key={category}>
               <span className="library-loader-heading">
                 <b>{MUSIC_LIBRARY_LABELS[category]}</b>
+                <small>{catalogCounts[category].toLocaleString()} songs</small>
                 <span className="library-source-links">
                   {MUSIC_LIBRARY_SOURCES[category].map((source) => (
                     <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
@@ -1100,39 +1234,147 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                   ))}
                 </span>
               </span>
-              <div className="select-action-row">
-                <select
-                  value={librarySelection[category]}
-                  disabled={loading}
-                  aria-label={`Load ${MUSIC_LIBRARY_LABELS[category]} song`}
-                  onChange={(event) => chooseLibrarySong(category, event.target.value)}
+              <div className="library-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={!catalogCounts[category]}
+                  onClick={() => openMusicCatalog(category)}
                 >
-                  <option value="">Choose a song...</option>
-                  {entries.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.title} — {entry.subtitle}
-                    </option>
-                  ))}
-                </select>
+                  <LibraryBig size={16} />
+                  Browse collection
+                </button>
                 <button
                   type="button"
                   className="icon-button inline-icon-button"
                   aria-label={`Load random ${MUSIC_LIBRARY_LABELS[category]} song`}
                   title={`Random ${MUSIC_LIBRARY_LABELS[category]}`}
-                  disabled={loading || !entries.length}
+                  disabled={loading || !catalogCounts[category]}
                   onClick={() => chooseRandomLibrarySong(category)}
                 >
                   <Dices size={19} />
                 </button>
               </div>
-              {selected && (
-                <small className="library-license">
-                  {libraryLoadingId === selected.id ? 'Loading and analyzing chords...' : `${selected.sourceName} · ${selected.license}`}
-                </small>
-              )}
-            </label>
+            </section>
           )
         })}
+        {catalogActivity && !catalogOpenCategory && <small className="library-license">{catalogActivity}</small>}
+      </div>
+    )
+  }
+
+  function renderCatalogBrowser() {
+    if (!catalogOpenCategory) return null
+    const heading = catalogOpenCategory === 'all' ? 'Search Song Collections' : MUSIC_LIBRARY_LABELS[catalogOpenCategory]
+    const firstResult = filteredCatalogEntries.length ? catalogPage * CATALOG_PAGE_SIZE + 1 : 0
+    const lastResult = Math.min(filteredCatalogEntries.length, (catalogPage + 1) * CATALOG_PAGE_SIZE)
+
+    return (
+      <div className="catalog-layer">
+        <button
+          type="button"
+          className="catalog-backdrop"
+          aria-label="Close song catalog"
+          onClick={() => setCatalogOpenCategory(null)}
+        />
+        <section className="catalog-panel" role="dialog" aria-modal="true" aria-label={heading}>
+          <header className="catalog-header">
+            <div>
+              <strong>{heading}</strong>
+              <span>{filteredCatalogEntries.length.toLocaleString()} matching songs</span>
+            </div>
+            <button type="button" className="icon-button" aria-label="Close song catalog" onClick={() => setCatalogOpenCategory(null)}>
+              <X size={20} />
+            </button>
+          </header>
+
+          <div className="catalog-toolbar">
+            <label className="catalog-search">
+              <Search size={18} />
+              <input
+                type="search"
+                value={catalogQuery}
+                placeholder="Search title, composer, game, or file..."
+                autoFocus
+                onChange={(event) => setCatalogQuery(event.target.value)}
+              />
+            </label>
+            <select
+              aria-label="Catalog source"
+              value={catalogSourceId}
+              onChange={(event) => setCatalogSourceId(event.target.value)}
+            >
+              <option value="all">All sources</option>
+              {activeCatalogSources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.label} ({source.entries.length.toLocaleString()})
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="button primary catalog-random-button"
+              disabled={Boolean(libraryLoadingId) || !filteredCatalogEntries.length}
+              onClick={chooseRandomCatalogResult}
+            >
+              <Dices size={18} />
+              Random from results
+            </button>
+          </div>
+
+          {catalogActivity && <div className="catalog-activity">{catalogActivity}</div>}
+
+          <div className="catalog-results" aria-live="polite">
+            {visibleCatalogEntries.map((entry) => (
+              <button
+                type="button"
+                className="catalog-result"
+                key={entry.id}
+                disabled={Boolean(libraryLoadingId)}
+                onClick={() => {
+                  setLibrarySelection((current) => ({ ...current, [entry.category]: entry.id }))
+                  void loadLibraryEntry(entry)
+                }}
+              >
+                <span>
+                  <strong>{entry.title}</strong>
+                  <small>{entry.subtitle}</small>
+                </span>
+                <em>{libraryLoadingId === entry.id ? 'Loading...' : entry.sourceName}</em>
+              </button>
+            ))}
+            {!visibleCatalogEntries.length && <div className="catalog-empty">No songs match that search.</div>}
+          </div>
+
+          <footer className="catalog-footer">
+            <span>
+              {firstResult.toLocaleString()}–{lastResult.toLocaleString()} of {filteredCatalogEntries.length.toLocaleString()}
+            </span>
+            <div className="catalog-pagination">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Previous catalog page"
+                disabled={catalogPage <= 0}
+                onClick={() => setCatalogPage((page) => Math.max(0, page - 1))}
+              >
+                <ChevronLeft size={19} />
+              </button>
+              <b>
+                {catalogPage + 1} / {catalogPageCount}
+              </b>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Next catalog page"
+                disabled={catalogPage >= catalogPageCount - 1}
+                onClick={() => setCatalogPage((page) => Math.min(catalogPageCount - 1, page + 1))}
+              >
+                <ChevronRight size={19} />
+              </button>
+            </div>
+          </footer>
+        </section>
       </div>
     )
   }
@@ -1376,6 +1618,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   if (variant === 'desktop') {
     return (
       <div className="app-shell desktop-shell" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
+        {renderCatalogBrowser()}
         <header className="desktop-header">
           <div className="brand" aria-label={APP_NAME}>
             <div className="brand-mark">
@@ -1404,6 +1647,15 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               onClick={() => (isPlaying ? pausePlayback() : void playFrom())}
             >
               {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={showNotation ? 'Hide sheet music or tab' : 'Show sheet music or tab'}
+              title={showNotation ? 'Hide sheet music or tab' : 'Show sheet music or tab'}
+              onClick={() => setShowNotation((visible) => !visible)}
+            >
+              {showNotation ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
             <button type="button" className="button secondary desktop-action-button" onClick={() => fileInputRef.current?.click()}>
               <FolderOpen size={18} />
@@ -1514,6 +1766,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 </select>
               </label>
 
+              <label className="toggle-field">
+                <span>Show Sheet / Tab</span>
+                <input type="checkbox" checked={showNotation} onChange={(event) => setShowNotation(event.target.checked)} />
+              </label>
+
               {instrumentViewMode === 'guitar' && (
                 <label className="field">
                   <span>Notation</span>
@@ -1598,8 +1855,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             )}
           </aside>
 
-          <section className="desktop-stage" aria-label="Desktop MIDI views">
-            {renderNotationView()}
+          <section className="desktop-stage" data-notation={showNotation ? 'shown' : 'hidden'} aria-label="Desktop MIDI views">
+            {showNotation && renderNotationView()}
             {renderMidiFlowView()}
           </section>
 
@@ -1753,6 +2010,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       onDrop={handleDrop}
       onDragOver={(event) => event.preventDefault()}
     >
+      {renderCatalogBrowser()}
       <header className="app-header">
         <div className="brand" aria-label={APP_NAME}>
           <div className="brand-mark">
@@ -1781,6 +2039,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             onClick={() => (isPlaying ? pausePlayback() : void playFrom())}
           >
             {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={showNotation ? 'Hide sheet music or tab' : 'Show sheet music or tab'}
+            onClick={() => setShowNotation((visible) => !visible)}
+          >
+            {showNotation ? <EyeOff size={20} /> : <Eye size={20} />}
           </button>
           <button
             type="button"
@@ -1908,6 +2174,17 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 <option value="piano">Piano Keyboard</option>
               </select>
             </label>
+
+            <label className="toggle-field">
+              <span>Show Sheet / Tab</span>
+              <input type="checkbox" checked={showNotation} onChange={(event) => setShowNotation(event.target.checked)} />
+            </label>
+
+            <button type="button" className="button secondary landscape-button" onClick={() => void enterLandscapePerformanceView()}>
+              <RectangleHorizontal size={18} />
+              Landscape Performance View
+            </button>
+            {landscapeMessage && <small className="landscape-message">{landscapeMessage}</small>}
 
             {instrumentViewMode === 'guitar' && (
               <label className="field">
@@ -2105,9 +2382,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       <main
         className="main-stage"
         data-flight-mode={connectedFlightMode ? 'connected' : undefined}
+        data-notation={showNotation ? 'shown' : 'hidden'}
         style={{ '--instrument-height': `${instrumentHeight}%` } as CSSProperties}
       >
-        {renderNotationView()}
+        {showNotation && renderNotationView()}
         {renderMidiFlowView()}
         <section
           className="neck-panel"

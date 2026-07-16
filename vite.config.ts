@@ -55,7 +55,7 @@ export default defineConfig(({ mode }) => {
           globPatterns: [
             offline
               ? '**/*.{js,css,html,ico,png,svg,webmanifest,woff2,mid,midi,json}'
-              : '**/*.{js,css,html,ico,png,svg,webmanifest,woff2}',
+              : '**/*.{js,css,html,ico,png,svg,webmanifest,woff2,json}',
           ],
           navigateFallback: offline ? 'index.html' : '/miditar/index.html',
           navigateFallbackDenylist: offline ? [] : [/^\/miditar\/desktop\//],

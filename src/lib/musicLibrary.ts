@@ -35,9 +35,11 @@ export const MUSIC_LIBRARY_SOURCES: Record<MusicLibraryCategory, MusicLibrarySou
   ],
   piano: [
     { label: 'Browse MuseTrainer', url: 'https://musetrainer.github.io/library/' },
+    { label: 'Browse ASAP', url: 'https://github.com/fosfrancesco/asap-dataset' },
     { label: 'Browse Mutopia', url: 'https://www.mutopiaproject.org/cgibin/make-table.cgi?Instrument=Piano' },
   ],
   'video-game': [
+    { label: 'Browse game archive', url: 'https://github.com/ryanrudes/game-midis' },
     { label: 'Browse VGMusic', url: 'https://www.vgmusic.com/' },
     { label: 'Browse CC0 game MIDI', url: 'https://opengameart.org/content/15-melodic-rpg-chiptunes' },
   ],
