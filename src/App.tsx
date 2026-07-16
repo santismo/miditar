@@ -20,7 +20,6 @@ import {
   exportGuitarMappedMidi,
   midiTicksToSeconds,
   noteName,
-  parseMidiFile,
   secondsToTicks,
   type MidiNote,
   type MidiTrack,
@@ -29,6 +28,8 @@ import {
 import { loadRecentMidiState, saveRecentMidiState, type RecentMidiFile } from './lib/recentMidiStore'
 import { pianoRangeForNotes } from './lib/pianoLayout'
 import { OFFLINE_BUILD } from './lib/buildMode'
+import { regenerateChordMarkers, withAnalyzedChordMarkers } from './lib/chordAnalysis'
+import { parseSupportedMusicFile, SUPPORTED_MUSIC_FILE_PATTERN } from './lib/tabImport'
 import {
   DEFAULT_STRING_CHANNEL_MAP,
   STRING_CHANNEL_PRESETS,
@@ -44,8 +45,18 @@ import {
   playbackInstrumentLabel,
   PLAYBACK_INSTRUMENTS,
   SamplePlaybackEngine,
+  type SampleInstrumentId,
   type PlaybackInstrumentId,
 } from './lib/sampleEngine'
+import { SoundFontPlaybackEngine } from './lib/soundFontEngine'
+import { loadStoredSoundFont, removeStoredSoundFont, saveStoredSoundFont } from './lib/soundFontStore'
+import {
+  entriesForCategory,
+  MUSIC_LIBRARY_LABELS,
+  MUSIC_LIBRARY_SOURCES,
+  type MusicLibraryCategory,
+  type MusicLibraryEntry,
+} from './lib/musicLibrary'
 
 const TRACK_COLORS = ['#f05d51', '#48b6ff', '#f2c14e', '#7bd88f']
 const DEMO_SONG = createDemoMidi()
@@ -66,8 +77,12 @@ type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
 type ActiveAudioEngine =
   | { kind: 'synth'; synth: Tone.PolySynth }
-  | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: Exclude<PlaybackInstrumentId, 'synth'> }
-type ScrubVoice = { kind: 'synth'; pitch: string } | { kind: 'sample' }
+  | { kind: 'sample'; engine: SamplePlaybackEngine; instrumentId: SampleInstrumentId }
+  | { kind: 'soundfont'; engine: SoundFontPlaybackEngine }
+type ScrubVoice =
+  | { kind: 'synth'; pitch: string }
+  | { kind: 'sample' }
+  | { kind: 'soundfont'; channel: number; midi: number }
 type InstrumentViewMode = 'guitar' | 'piano'
 type NotationViewMode = 'tab' | 'sheet'
 type GuitarNeckDisplayMode = 'flat' | 'rocksmith'
@@ -88,10 +103,12 @@ const GUITAR_INSTRUMENTS = new Set<PlaybackInstrumentId>([
   'sample:guitar-nylon',
   'sample:guitar-electric',
   'sample:bass-electric',
+  'soundfont:custom',
   'synth',
 ])
-const PIANO_INSTRUMENTS = new Set<PlaybackInstrumentId>(['sample:piano', 'synth'])
+const PIANO_INSTRUMENTS = new Set<PlaybackInstrumentId>(['sample:piano', 'soundfont:custom', 'synth'])
 const SMART_MELODY_SLOT_LABELS = ['Track 1 (Primary)', 'Track 2 (Secondary)', 'Track 3 (Bass)']
+const MUSIC_LIBRARY_CATEGORIES: MusicLibraryCategory[] = ['guitar', 'piano', 'video-game']
 const RocksmithNeckView = lazy(() =>
   import('./components/RocksmithNeckView').then((module) => ({ default: module.RocksmithNeckView })),
 )
@@ -191,6 +208,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [chordMelodyMode, setChordMelodyMode] = useState(true)
   const [smartMelodyTrackSlot, setSmartMelodyTrackSlot] = useState<TrackSlot>(1)
   const [useSourceStringChannels, setUseSourceStringChannels] = useState(false)
+  const [useOriginalTabPositions, setUseOriginalTabPositions] = useState(true)
   const [stringChannelPreset, setStringChannelPreset] = useState<StringChannelPresetId>('miditar-11')
   const [stringChannelMap, setStringChannelMap] = useState<StringChannelMap>(DEFAULT_STRING_CHANNEL_MAP)
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY)
@@ -203,12 +221,22 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [audioStatus, setAudioStatus] = useState('')
+  const [soundFontName, setSoundFontName] = useState('')
+  const [librarySelection, setLibrarySelection] = useState<Record<MusicLibraryCategory, string>>({
+    guitar: '',
+    piano: '',
+    'video-game': '',
+  })
+  const [libraryLoadingId, setLibraryLoadingId] = useState('')
   const [exampleSongs, setExampleSongs] = useState<ExampleSongEntry[]>([])
   const [exampleLoading, setExampleLoading] = useState(false)
   const [recentMidiFiles, setRecentMidiFiles] = useState<RecentMidiFile[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const soundFontInputRef = useRef<HTMLInputElement | null>(null)
   const synthRef = useRef<Tone.PolySynth | null>(null)
   const sampleEngineRef = useRef<SamplePlaybackEngine | null>(null)
+  const soundFontEngineRef = useRef<SoundFontPlaybackEngine | null>(null)
+  const soundFontBufferRef = useRef<ArrayBuffer | null>(null)
   const playOffsetRef = useRef(0)
   const playStartedAtRef = useRef(0)
   const playbackRunRef = useRef(0)
@@ -276,28 +304,36 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     if (bassTrack !== null) indexes.add(bassTrack)
     return indexes
   }, [selectedTrackIndexes])
-  const notePlacements = useMemo(
-    () =>
-      mapNotesToFretboard(combinedNotes, {
-        smart: smartGuitarMode,
-        smartMelody: smartGuitarMode && smartGuitarMelody,
-        chordMelody: smartGuitarMode && smartGuitarMelody && chordMelodyMode,
-        melodyTrackIndexes,
-        bassTrackIndexes,
-        sourceChannelMap: stringChannelMap,
-        useSourceChannels: useSourceStringChannels,
-      }),
-    [
-      bassTrackIndexes,
-      combinedNotes,
-      chordMelodyMode,
+  const hasOriginalTabPositions = Boolean(song.exactPlacements?.length)
+  const notePlacements = useMemo(() => {
+    const mapped = mapNotesToFretboard(combinedNotes, {
+      smart: smartGuitarMode,
+      smartMelody: smartGuitarMode && smartGuitarMelody,
+      chordMelody: smartGuitarMode && smartGuitarMelody && chordMelodyMode,
       melodyTrackIndexes,
-      smartGuitarMelody,
-      smartGuitarMode,
-      stringChannelMap,
-      useSourceStringChannels,
-    ],
-  )
+      bassTrackIndexes,
+      sourceChannelMap: stringChannelMap,
+      useSourceChannels: useSourceStringChannels,
+    })
+    if (useOriginalTabPositions) {
+      const visibleNotes = new Set(combinedNotes.map((note) => note.id))
+      for (const placement of song.exactPlacements ?? []) {
+        if (visibleNotes.has(placement.noteId)) mapped.set(placement.noteId, placement)
+      }
+    }
+    return mapped
+  }, [
+    bassTrackIndexes,
+    combinedNotes,
+    chordMelodyMode,
+    melodyTrackIndexes,
+    smartGuitarMelody,
+    smartGuitarMode,
+    stringChannelMap,
+    song.exactPlacements,
+    useOriginalTabPositions,
+    useSourceStringChannels,
+  ])
   const currentChord = currentMarkerText(song, currentTime)
   const connectedFlightMode = instrumentViewMode === 'guitar' && guitarNeckDisplayMode === 'rocksmith'
 
@@ -306,6 +342,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     setSelectedTrackIndexes(chooseDefaultTracks(song))
     setCurrentTime(0)
     setTempoBpm(songTempoBpm(song))
+    setUseOriginalTabPositions(Boolean(song.exactPlacements?.length))
     stopPlayback()
   }, [songIndex, song])
 
@@ -325,9 +362,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       })
 
     void loadRecentMidiState()
-      .then((state) => {
+      .then(async (state) => {
         if (cancelled || !state?.files.length) return
-        const parsed = state.files.map((file) => parseMidiFile(file.buffer.slice(0), file.name))
+        const parsed = await Promise.all(
+          state.files.map(async (file) =>
+            withAnalyzedChordMarkers(await parseSupportedMusicFile(file.buffer.slice(0), file.name)),
+          ),
+        )
+        if (cancelled) return
         const nextIndex = Math.min(parsed.length - 1, Math.max(0, state.songIndex))
         setRecentMidiFiles(state.files)
         setSongs(parsed)
@@ -340,6 +382,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         if (!cancelled) setRecentMidiFiles(null)
       })
 
+    void loadStoredSoundFont()
+      .then((stored) => {
+        if (cancelled || !stored) return
+        soundFontBufferRef.current = stored.buffer
+        setSoundFontName(stored.name)
+      })
+      .catch(() => undefined)
+
     return () => {
       cancelled = true
     }
@@ -350,6 +400,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     stopPlayback()
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
+    soundFontEngineRef.current?.releaseAll()
     setAudioStatus('')
     setPlaybackInstrumentId(defaultInstrumentForViewMode(instrumentViewMode))
   }, [instrumentViewMode, playbackInstrumentId, playbackInstruments])
@@ -360,6 +411,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       releaseAllScrubAudition()
       synthRef.current?.dispose()
       sampleEngineRef.current?.dispose()
+      soundFontEngineRef.current?.dispose()
     }
   }, [])
 
@@ -409,8 +461,43 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     return sampleEngineRef.current
   }
 
+  function getSoundFontEngine() {
+    const rawContext = Tone.getContext().rawContext
+    if (!rawContext || !('audioWorklet' in rawContext)) {
+      throw new Error('SoundFont playback requires AudioWorklet support in this browser.')
+    }
+
+    const context = rawContext as AudioContext
+    if (!soundFontEngineRef.current || soundFontEngineRef.current.context !== context) {
+      soundFontEngineRef.current?.dispose()
+      soundFontEngineRef.current = new SoundFontPlaybackEngine(context)
+    }
+    return soundFontEngineRef.current
+  }
+
   async function prepareAudioEngine(): Promise<ActiveAudioEngine> {
     await Tone.start()
+    if (playbackInstrumentId === 'soundfont:custom') {
+      const buffer = soundFontBufferRef.current
+      if (!buffer || !soundFontName) {
+        setAudioStatus('Load a SoundFont to use this sound mode')
+        return { kind: 'synth', synth: getSynth() }
+      }
+
+      try {
+        const engine = getSoundFontEngine()
+        setAudioStatus(`Loading ${soundFontName}...`)
+        await engine.load(buffer, soundFontName)
+        setAudioStatus(`${soundFontName} ready`)
+        return { kind: 'soundfont', engine }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'SoundFont unavailable.'
+        setAudioStatus('SoundFont unavailable; using Synth')
+        setError(message)
+        return { kind: 'synth', synth: getSynth() }
+      }
+    }
+
     if (!isSampleInstrument(playbackInstrumentId)) {
       setAudioStatus('')
       return { kind: 'synth', synth: getSynth() }
@@ -443,6 +530,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     return noteName(mappedMidi(note))
   }
 
+  function programForNote(note: MidiNote) {
+    return song.tracks.find((track) => track.index === note.trackIndex)?.programs[note.channel] ?? 0
+  }
+
   function clearScrubReleaseTimer() {
     if (scrubReleaseTimerRef.current !== null) {
       window.clearTimeout(scrubReleaseTimerRef.current)
@@ -453,10 +544,12 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   function releaseScrubAudition(retainIds = new Set<string>()) {
     const synth = synthRef.current
     const sampleEngine = sampleEngineRef.current
+    const soundFontEngine = soundFontEngineRef.current
     for (const [noteId, voice] of scrubAuditionRef.current) {
       if (retainIds.has(noteId)) continue
       if (voice.kind === 'synth') synth?.triggerRelease(voice.pitch)
-      else sampleEngine?.triggerRelease(noteId)
+      else if (voice.kind === 'sample') sampleEngine?.triggerRelease(noteId)
+      else soundFontEngine?.triggerRelease(voice.channel, voice.midi)
       scrubAuditionRef.current.delete(noteId)
     }
     if (!scrubAuditionRef.current.size) clearScrubReleaseTimer()
@@ -506,6 +599,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             start + index * 0.004,
             velocity,
           )
+          return
+        }
+
+        if (engine.kind === 'soundfont') {
+          const channel = note.channel - 1
+          const midi = mappedMidi(note)
+          scrubAuditionRef.current.set(note.id, { kind: 'soundfont', channel, midi })
+          engine.engine.triggerAttack(channel, midi, velocity, programForNote(note), start + index * 0.004)
           return
         }
 
@@ -560,6 +661,17 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             )
             return
           }
+          if (engine.kind === 'soundfont') {
+            engine.engine.triggerAttackRelease(
+              note.channel - 1,
+              mappedMidi(note),
+              duration,
+              note.velocity * 0.78,
+              programForNote(note),
+              scheduledTime,
+            )
+            return
+          }
           engine.synth.triggerAttackRelease(mappedNoteName(note), duration, scheduledTime, note.velocity * 0.78)
         }, start)
       }
@@ -577,6 +689,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     playbackRunRef.current += 1
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
+    soundFontEngineRef.current?.releaseAll()
     const transport = Tone.getTransport()
     const elapsed = (performance.now() - playStartedAtRef.current) / 1000
     const nextTime = clampTime(playOffsetRef.current + elapsed * playbackRate, song)
@@ -589,6 +702,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     playbackRunRef.current += 1
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
+    soundFontEngineRef.current?.releaseAll()
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     const transport = Tone.getTransport()
     transport.stop()
@@ -659,7 +773,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   }, [desktopSizing, variant])
 
   async function loadFiles(fileList: FileList | File[]) {
-    const files = [...fileList].filter((file) => /\.(mid|midi)$/i.test(file.name))
+    const files = [...fileList].filter((file) => SUPPORTED_MUSIC_FILE_PATTERN.test(file.name))
     if (!files.length) return
 
     try {
@@ -673,7 +787,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           buffer: await file.arrayBuffer(),
         })),
       )
-      const parsed = loadedFiles.map((file) => parseMidiFile(file.buffer.slice(0), file.name))
+      const parsed = await Promise.all(
+        loadedFiles.map(async (file) =>
+          withAnalyzedChordMarkers(await parseSupportedMusicFile(file.buffer.slice(0), file.name)),
+        ),
+      )
       setSongs(parsed)
       setSongIndex(0)
       setRecentMidiFiles(loadedFiles)
@@ -685,6 +803,108 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load MIDI file.')
     }
+  }
+
+  async function loadLibraryEntry(entry: MusicLibraryEntry) {
+    stopPlayback()
+    releaseAllScrubAudition()
+    setError('')
+    setLibraryLoadingId(entry.id)
+
+    try {
+      const response = await fetch(entry.url)
+      if (!response.ok) throw new Error(`The ${entry.sourceName} source returned ${response.status}.`)
+      const buffer = await response.arrayBuffer()
+      const loadedSong = withAnalyzedChordMarkers(await parseSupportedMusicFile(buffer.slice(0), entry.fileName))
+      const loadedFile: RecentMidiFile = {
+        name: entry.fileName,
+        lastModified: Date.now(),
+        buffer,
+      }
+
+      const viewMode: InstrumentViewMode = entry.category === 'guitar' ? 'guitar' : 'piano'
+      updateInstrumentViewMode(viewMode)
+      setSongs([loadedSong])
+      setSongIndex(0)
+      setRecentMidiFiles([loadedFile])
+      setSelectedTrackIndexes(chooseDefaultTracks(loadedSong))
+      setCurrentTime(0)
+      setTempoBpm(songTempoBpm(loadedSong))
+      setSettingsOpen(false)
+      void saveRecentMidiState({ files: [loadedFile], songIndex: 0 })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not load ${entry.title}.`)
+    } finally {
+      setLibraryLoadingId('')
+    }
+  }
+
+  function chooseLibrarySong(category: MusicLibraryCategory, id: string) {
+    setLibrarySelection((current) => ({ ...current, [category]: id }))
+    const entry = entriesForCategory(category).find((candidate) => candidate.id === id)
+    if (entry) void loadLibraryEntry(entry)
+  }
+
+  function chooseRandomLibrarySong(category: MusicLibraryCategory) {
+    if (libraryLoadingId) return
+    const entries = entriesForCategory(category)
+    const currentId = librarySelection[category]
+    const choices = entries.length > 1 ? entries.filter((entry) => entry.id !== currentId) : entries
+    const entry = choices[Math.floor(Math.random() * choices.length)]
+    if (!entry) return
+    setLibrarySelection((current) => ({ ...current, [category]: entry.id }))
+    void loadLibraryEntry(entry)
+  }
+
+  async function loadSoundFontFile(file: File) {
+    if (!/\.(sf2|sf3|dls)$/i.test(file.name)) {
+      setError('Choose an SF2, SF3, or DLS SoundFont file.')
+      return
+    }
+
+    try {
+      stopPlayback()
+      releaseAllScrubAudition()
+      setError('')
+      setAudioStatus(`Reading ${file.name}...`)
+      const buffer = await file.arrayBuffer()
+      soundFontEngineRef.current?.dispose()
+      soundFontEngineRef.current = null
+      soundFontBufferRef.current = buffer
+      setSoundFontName(file.name)
+      setPlaybackInstrumentId('soundfont:custom')
+      setAudioStatus(`${file.name} loaded`)
+      await saveStoredSoundFont({
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified,
+        buffer: buffer.slice(0),
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load that SoundFont.')
+      setAudioStatus('')
+    }
+  }
+
+  function clearSoundFont() {
+    stopPlayback()
+    releaseAllScrubAudition()
+    soundFontEngineRef.current?.dispose()
+    soundFontEngineRef.current = null
+    soundFontBufferRef.current = null
+    setSoundFontName('')
+    setAudioStatus('')
+    if (playbackInstrumentId === 'soundfont:custom') setPlaybackInstrumentId('synth')
+    void removeStoredSoundFont().catch(() => undefined)
+  }
+
+  function findMatchingSoundFont() {
+    const query = song.title || 'General MIDI'
+    window.open(
+      `https://musical-artifacts.com/artifacts?q=${encodeURIComponent(query)}&formats=sf2`,
+      '_blank',
+      'noopener,noreferrer',
+    )
   }
 
   function updateTrackSlot(slot: TrackSlot, value: string) {
@@ -726,6 +946,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     stopPlayback()
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
+    soundFontEngineRef.current?.releaseAll()
     setAudioStatus('')
     setError('')
     setPlaybackInstrumentId(value)
@@ -735,6 +956,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     stopPlayback()
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
+    soundFontEngineRef.current?.releaseAll()
     setAudioStatus('')
     setError('')
     setInstrumentViewMode(value)
@@ -808,6 +1030,151 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         </label>
       </>
     )
+  }
+
+  function renderOriginalTabControl() {
+    if (!hasOriginalTabPositions) return null
+    return (
+      <label className="toggle-field">
+        <span>Use Original Tab Positions</span>
+        <input
+          type="checkbox"
+          checked={useOriginalTabPositions}
+          onChange={(event) => {
+            stopPlayback()
+            releaseAllScrubAudition()
+            setUseOriginalTabPositions(event.target.checked)
+          }}
+        />
+      </label>
+    )
+  }
+
+  function reanalyzeSelectedTracks() {
+    const trackIndexes = new Set(selectedTrackIndexes.filter((index): index is number => index !== null))
+    const nextSong = regenerateChordMarkers(song, { trackIndexes: trackIndexes.size ? trackIndexes : undefined })
+    setSongs((current) => current.map((item, index) => (index === songIndex ? nextSong : item)))
+  }
+
+  function renderChordAnalysisControls() {
+    const generated = song.markers.filter((marker) => marker.type === 'marker' && marker.source === 'analysis')
+    const fileMarkers = song.markers.filter((marker) => marker.type === 'marker' && marker.source !== 'analysis')
+
+    return (
+      <div className="analysis-controls">
+        <div className="analysis-summary">
+          <span>Chord Markers</span>
+          <strong>
+            {fileMarkers.length
+              ? `${fileMarkers.length} from file`
+              : generated.length
+                ? `${generated.length} analyzed`
+                : 'None detected'}
+          </strong>
+        </div>
+        {!fileMarkers.length && (
+          <button type="button" className="button secondary" onClick={reanalyzeSelectedTracks}>
+            Analyze Selected Tracks
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  function renderMusicLibrary() {
+    return (
+      <div className="music-library-loaders">
+        {MUSIC_LIBRARY_CATEGORIES.map((category) => {
+          const entries = entriesForCategory(category)
+          const selected = entries.find((entry) => entry.id === librarySelection[category])
+          const loading = Boolean(libraryLoadingId)
+          return (
+            <label className="field library-loader" key={category}>
+              <span className="library-loader-heading">
+                <b>{MUSIC_LIBRARY_LABELS[category]}</b>
+                <span className="library-source-links">
+                  {MUSIC_LIBRARY_SOURCES[category].map((source) => (
+                    <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
+                      {source.label}
+                    </a>
+                  ))}
+                </span>
+              </span>
+              <div className="select-action-row">
+                <select
+                  value={librarySelection[category]}
+                  disabled={loading}
+                  aria-label={`Load ${MUSIC_LIBRARY_LABELS[category]} song`}
+                  onChange={(event) => chooseLibrarySong(category, event.target.value)}
+                >
+                  <option value="">Choose a song...</option>
+                  {entries.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.title} — {entry.subtitle}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="icon-button inline-icon-button"
+                  aria-label={`Load random ${MUSIC_LIBRARY_LABELS[category]} song`}
+                  title={`Random ${MUSIC_LIBRARY_LABELS[category]}`}
+                  disabled={loading || !entries.length}
+                  onClick={() => chooseRandomLibrarySong(category)}
+                >
+                  <Dices size={19} />
+                </button>
+              </div>
+              {selected && (
+                <small className="library-license">
+                  {libraryLoadingId === selected.id ? 'Loading and analyzing chords...' : `${selected.sourceName} · ${selected.license}`}
+                </small>
+              )}
+            </label>
+          )
+        })}
+      </div>
+    )
+  }
+
+  function renderSoundFontControls() {
+    return (
+      <div className="soundfont-controls">
+        <input
+          ref={soundFontInputRef}
+          className="soundfont-input"
+          type="file"
+          accept=".sf2,.sf3,.dls"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) void loadSoundFontFile(file)
+            event.target.value = ''
+          }}
+        />
+        <div className="soundfont-actions">
+          <button type="button" className="button secondary" onClick={() => soundFontInputRef.current?.click()}>
+            <FolderOpen size={16} />
+            Load SoundFont
+          </button>
+          <button type="button" className="button secondary" onClick={findMatchingSoundFont}>
+            Find for This Song
+          </button>
+        </div>
+        {soundFontName && (
+          <div className="soundfont-loaded">
+            <span title={soundFontName}>{soundFontName}</span>
+            <button type="button" onClick={clearSoundFont} aria-label="Remove loaded SoundFont">
+              Remove
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function playbackInstrumentOptionLabel(instrument: (typeof PLAYBACK_INSTRUMENTS)[number]) {
+    if (instrument.id === 'soundfont:custom' && soundFontName) return `SoundFont — ${soundFontName}`
+    return instrument.label
   }
 
   function renderNotationView() {
@@ -973,17 +1340,18 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       const entry = exampleSongs.find((item) => item.id === value)
       if (!entry) return
       const loaded = await loadExampleSong(entry)
+      const analyzedSong = withAnalyzedChordMarkers(loaded.song)
       const loadedFile: RecentMidiFile = {
         name: `${entry.title}.mid`,
         lastModified: Date.now(),
         buffer: loaded.buffer,
       }
-      setSongs([loaded.song])
+      setSongs([analyzedSong])
       setSongIndex(0)
       setRecentMidiFiles([loadedFile])
-      setSelectedTrackIndexes(chooseDefaultTracks(loaded.song))
+      setSelectedTrackIndexes(chooseDefaultTracks(analyzedSong))
       setCurrentTime(0)
-      setTempoBpm(songTempoBpm(loaded.song))
+      setTempoBpm(songTempoBpm(analyzedSong))
       setSettingsOpen(false)
       void saveRecentMidiState({ files: [loadedFile], songIndex: 0 })
     } catch (err) {
@@ -1025,7 +1393,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".mid,.midi,audio/midi"
+              accept=".mid,.midi,.gp,.gp3,.gp4,.gp5,.gpx,.musicxml,.mxl,.xml,audio/midi"
               multiple
               onChange={(event) => event.target.files && loadFiles(event.target.files)}
             />
@@ -1039,7 +1407,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
             </button>
             <button type="button" className="button secondary desktop-action-button" onClick={() => fileInputRef.current?.click()}>
               <FolderOpen size={18} />
-              Open MIDI
+              Open Music File
             </button>
             <button type="button" className="button secondary desktop-action-button" onClick={exportMappedMidi} disabled={!virtualTrack}>
               <Download size={18} />
@@ -1052,6 +1420,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           <aside className="desktop-sidebar" aria-label="Library and playback controls">
             <section className="desktop-control-section">
               <h2>Library</h2>
+              {renderMusicLibrary()}
               <label className="field">
                 <span>
                   <FileMusic size={15} />
@@ -1129,6 +1498,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                   )
                 })}
               </div>
+              {renderChordAnalysisControls()}
             </section>
 
             <section className="desktop-control-section">
@@ -1168,11 +1538,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 >
                   {playbackInstruments.map((instrument) => (
                     <option key={instrument.id} value={instrument.id}>
-                      {instrument.label}
+                      {playbackInstrumentOptionLabel(instrument)}
                     </option>
                   ))}
                 </select>
               </label>
+
+              {renderSoundFontControls()}
 
               <label className="range-field">
                 <span>Tempo</span>
@@ -1284,6 +1656,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                   </label>
 
                   {renderSmartMelodyControls()}
+                  {renderOriginalTabControl()}
 
                   <label className="field">
                     <span>MIDI Display</span>
@@ -1397,7 +1770,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".mid,.midi,audio/midi"
+            accept=".mid,.midi,.gp,.gp3,.gp4,.gp5,.gpx,.musicxml,.mxl,.xml,audio/midi"
             multiple
             onChange={(event) => event.target.files && loadFiles(event.target.files)}
           />
@@ -1438,8 +1811,10 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
             <button type="button" className="button primary" onClick={() => fileInputRef.current?.click()}>
               <FolderOpen size={18} />
-              Open MIDI
+              Open Music File
             </button>
+
+            {renderMusicLibrary()}
 
             <label className="field">
               <span>
@@ -1521,6 +1896,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               })}
             </div>
 
+            {renderChordAnalysisControls()}
+
             <label className="field">
               <span>View Mode</span>
               <select
@@ -1561,6 +1938,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                 </label>
 
                 {renderSmartMelodyControls()}
+                {renderOriginalTabControl()}
 
                 <label className="field">
                   <span>MIDI Display</span>
@@ -1634,11 +2012,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               >
                 {playbackInstruments.map((instrument) => (
                   <option key={instrument.id} value={instrument.id}>
-                    {instrument.label}
+                    {playbackInstrumentOptionLabel(instrument)}
                   </option>
                 ))}
               </select>
             </label>
+
+            {renderSoundFontControls()}
 
             <label className="range-field">
               <span>Tempo</span>
