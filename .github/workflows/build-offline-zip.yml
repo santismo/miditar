@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 defaults:
   run:
@@ -45,3 +45,15 @@ jobs:
           name: miditar-dist
           path: miditar-dist.zip
           if-no-files-found: error
+
+      - name: Refresh checked-in offline app
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all miditar-offline
+          if git diff --cached --quiet; then
+            echo "Checked-in offline app is already current."
+          else
+            git commit -m "build: refresh Miditar Offline"
+            git push origin HEAD:main
+          fi
