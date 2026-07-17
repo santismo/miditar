@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import type { MidiMarker, MidiNote, ParsedMidi } from '../lib/midi'
 import { activeMarkerAtTick, midiTicksToSeconds, secondsToTicks } from '../lib/midi'
 import { dedupeNotesByStartPitch } from '../lib/displayNotes'
@@ -198,7 +198,7 @@ function buildNotationNotes(
   return tickables.length ? tickables : [new Vex.StaveNote({ clef, keys: [restKey(clef)], duration: 'wr' })]
 }
 
-function MeasureNotation({
+const MeasureNotation = memo(function MeasureNotation({
   measure,
   midi,
   showSignature,
@@ -277,7 +277,7 @@ function MeasureNotation({
       })}
     </div>
   )
-}
+})
 
 export function SheetView({
   midi,

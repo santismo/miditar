@@ -5,6 +5,7 @@ const PROCESSOR_URL = `${import.meta.env.BASE_URL}spessasynth_processor.min.js`
 const PROCESSOR_LOADS = new WeakMap<BaseAudioContext, Promise<void>>()
 const COMPACT_OUTPUT_CHANNELS = 32
 const SOUND_FONT_VOICE_CAP = 128
+const COMPACT_SOUND_FONT_VOICE_CAP = 64
 
 async function ensureProcessor(context: AudioContext) {
   if (context.state === 'closed') throw new Error('The audio session was closed. Tap Play to start a new one.')
@@ -119,7 +120,10 @@ export class SoundFontPlaybackEngine {
       await synth.soundBankManager.addSoundBank(buffer.slice(0), bankId)
       await synth.isReady
       if (generation !== this.generation) throw interruptedError()
-      synth.setSystemParameter('voiceCap', SOUND_FONT_VOICE_CAP)
+      synth.setSystemParameter(
+        'voiceCap',
+        compact ? COMPACT_SOUND_FONT_VOICE_CAP : SOUND_FONT_VOICE_CAP,
+      )
       synth.setSystemParameter('autoAllocateVoices', false)
       synth.midiChannels[9]?.setDrums(true)
       this.synth = synth

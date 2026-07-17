@@ -37,6 +37,8 @@ type LaneSplit = {
 type ChordPlacement = 'center' | 'right' | 'left'
 
 const DEFAULT_PIXELS_PER_SECOND = 168
+const MIN_VISIBLE_NOTE_SECONDS = 18
+const PAST_VISIBLE_NOTE_SECONDS = 3
 const GUITAR_CHORD_CENTER = ((FRETBOARD_LEFT + FRETBOARD_VIEW_WIDTH - FRETBOARD_RIGHT) / 2 / FRETBOARD_VIEW_WIDTH) * 100
 const CHORD_BLOCK_HALF_WIDTH = 15
 
@@ -111,6 +113,15 @@ export function FlowView({
     () => dedupeNotesByStartPitch(notes, melodyTrackIndexes),
     [melodyTrackIndexes, notes],
   )
+  const visibleDisplayNotes = useMemo(() => {
+    const visibleStart = Math.max(0, currentTime - PAST_VISIBLE_NOTE_SECONDS)
+    const screenSeconds =
+      typeof window === 'undefined' ? MIN_VISIBLE_NOTE_SECONDS : window.innerHeight / pixelsPerSecond + 8
+    const visibleEnd = Math.min(midi.duration, currentTime + Math.max(MIN_VISIBLE_NOTE_SECONDS, screenSeconds))
+    return displayNotes.filter(
+      (note) => note.time <= visibleEnd && note.time + note.duration >= visibleStart,
+    )
+  }, [currentTime, displayNotes, midi.duration, pixelsPerSecond])
   const timelinePercent = midi.duration ? clamp(currentTime / midi.duration, 0, 1) * 100 : 0
   const measureTicks = getMeasureTicks(midi)
   const { guitarLaneSplits, mobileClusterDuplicateLabels } = useMemo(() => {
@@ -365,7 +376,7 @@ export function FlowView({
                   <strong>{event.text}</strong>
                 </div>
               ))}
-            {displayNotes.map((note) => {
+            {visibleDisplayNotes.map((note) => {
               const trackColor = trackColors[note.trackIndex]
               let x = 0
               let width = 0
