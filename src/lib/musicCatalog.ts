@@ -11,7 +11,9 @@ export type MusicCatalogSource = {
   sourceUrl: string
   delivery: MusicCatalogDelivery
   rawBase?: string
+  fallbackBase?: string
   archiveUrl?: string
+  archiveUrls?: string[]
   entries: Array<{
     path: string
     title: string
@@ -34,7 +36,9 @@ export type MusicCatalogEntry = {
   path: string
   delivery: MusicCatalogDelivery
   url?: string
+  urls?: string[]
   archiveUrl?: string
+  archiveUrls?: string[]
   sourceId: string
   sourceName: string
   sourceUrl: string
@@ -47,21 +51,33 @@ function encodedPath(path: string) {
 
 export function flattenMusicCatalog(manifest: MusicCatalogManifest): MusicCatalogEntry[] {
   return manifest.sources.flatMap((source) =>
-    source.entries.map((entry) => ({
-      id: `${source.id}:${entry.path}`,
-      category: source.category,
-      title: entry.title,
-      subtitle: entry.subtitle,
-      fileName: entry.path.split('/').at(-1) ?? `${source.id}.mid`,
-      path: entry.path,
-      delivery: source.delivery,
-      url: source.rawBase ? `${source.rawBase}/${encodedPath(entry.path)}` : undefined,
-      archiveUrl: source.archiveUrl,
-      sourceId: source.id,
-      sourceName: source.label,
-      sourceUrl: source.sourceUrl,
-      license: source.license,
-    })),
+    source.entries.map((entry) => {
+      const urls = [source.rawBase, source.fallbackBase]
+        .filter((base): base is string => Boolean(base))
+        .map((base) => `${base}/${encodedPath(entry.path)}`)
+      const archiveUrls = source.archiveUrls?.length
+        ? source.archiveUrls
+        : source.archiveUrl
+          ? [source.archiveUrl]
+          : []
+      return {
+        id: `${source.id}:${entry.path}`,
+        category: source.category,
+        title: entry.title,
+        subtitle: entry.subtitle,
+        fileName: entry.path.split('/').at(-1) ?? `${source.id}.mid`,
+        path: entry.path,
+        delivery: source.delivery,
+        url: urls[0],
+        urls,
+        archiveUrl: archiveUrls[0],
+        archiveUrls,
+        sourceId: source.id,
+        sourceName: source.label,
+        sourceUrl: source.sourceUrl,
+        license: source.license,
+      }
+    }),
   )
 }
 

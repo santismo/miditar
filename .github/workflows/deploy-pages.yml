@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Refresh music catalogs
+        run: npm run refresh:catalogs
+
       - name: Build Miditar
         run: npm run build
 

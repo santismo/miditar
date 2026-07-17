@@ -89,21 +89,28 @@ async function githubSource(config) {
     sourceUrl: `https://github.com/${config.repository}`,
     delivery: 'direct',
     rawBase: `https://raw.githubusercontent.com/${config.repository}/${config.ref}`,
+    fallbackBase: `https://cdn.jsdelivr.net/gh/${config.repository}@${config.ref}`,
     entries,
   }
 }
 
 async function gameArchiveSource() {
   const archiveUrl = 'https://raw.githubusercontent.com/ryanrudes/game-midis/main/Music.zip'
+  const archiveUrls = [
+    archiveUrl,
+    'https://cdn.jsdelivr.net/gh/ryanrudes/game-midis@main/Music.zip',
+  ]
   const response = await fetch(archiveUrl)
   if (!response.ok) throw new Error(`Game MIDI archive returned ${response.status}`)
   const archive = await JSZip.loadAsync(await response.arrayBuffer())
-  const entries = Object.values(archive.files)
+  const candidates = Object.values(archive.files)
     .filter((entry) => {
       if (entry.dir || entry.name.startsWith('__MACOSX/') || /\/\._[^/]+$/.test(entry.name)) return false
       return /\.(mid|midi)$/i.test(entry.name)
     })
-    .map((entry) => {
+  const entries = (await Promise.all(candidates.map(async (entry) => {
+      const bytes = await entry.async('uint8array')
+      if (bytes.length < 14 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'MThd') return null
       const path = entry.name
       const parts = path.split('/')
       const game = parts.length > 1 ? parts[0] : 'Video Game'
@@ -112,7 +119,8 @@ async function gameArchiveSource() {
         title: humanize(basename(path)),
         subtitle: humanize(game),
       }
-    })
+    })))
+    .filter(Boolean)
     .sort((a, b) => a.subtitle.localeCompare(b.subtitle) || a.title.localeCompare(b.title))
 
   return {
@@ -124,8 +132,30 @@ async function gameArchiveSource() {
     sourceUrl: 'https://github.com/ryanrudes/game-midis',
     delivery: 'archive',
     archiveUrl,
+    archiveUrls,
     entries,
   }
+}
+
+function rockMidiTitle(path) {
+  const fileName = basename(path).replace(/(\.(mid|midi))+$/i, '')
+  const [title] = fileName.split(/\s+-\s+/, 2)
+  return humanizeRockText(title || fileName)
+}
+
+function rockMidiSubtitle(path) {
+  const fileName = basename(path).replace(/(\.(mid|midi))+$/i, '')
+  const [, artist] = fileName.split(/\s+-\s+/, 2)
+  return `${humanizeRockText(artist || 'Rock guitar')} · rock / metal MIDI`
+}
+
+function humanizeRockText(value) {
+  return value
+    .replace(/\s+\(\d+\)$/g, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 const asap = await asapMetadata()
@@ -141,6 +171,18 @@ const sources = await Promise.all([
     ref: 'master',
     pattern: /^app\/midis\/.*\.(mid|midi)$/i,
     subtitle: () => 'Classical guitar MIDI',
+  }),
+  githubSource({
+    id: 'wild-west-rock',
+    category: 'guitar',
+    label: 'Wild West Rock & Shred Archive',
+    description: 'Large collection of named rock, alternative, punk, metal, and guitar MIDI arrangements.',
+    license: 'Community transcriptions · rights vary · personal playback',
+    repository: 'thewildwestmidis/midis',
+    ref: 'main',
+    pattern: /\.(mid|midi)$/i,
+    title: rockMidiTitle,
+    subtitle: rockMidiSubtitle,
   }),
   githubSource({
     id: 'musetrainer',

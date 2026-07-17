@@ -11,19 +11,19 @@ Desktop app: https://santismo.github.io/miditar/desktop/
 - Open one or more MIDI, Guitar Pro (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`), or MusicXML (`.musicxml`, `.mxl`, `.xml`) files.
 - Guitar Pro imports retain authored string/fret choices for the tab, falling notes, fretboard, auditioning, and export, with a switch to fall back to Miditar's smart mapping.
 - Automatically generates chord markers when a file does not contain them, with a command to reanalyze only the selected tracks.
-- Searchable Guitar, Piano/Ragtime, and Video Game collection browser with 5,500+ indexed files, source filters, pagination, and random selection from a whole category or the current search results.
+- Searchable Guitar/Rock/Shred/Classical, Piano/Ragtime, and Video Game collection browser with 7,200+ indexed files, source filters, full-height touch scrolling, pagination, and random selection from a whole category or the current search results.
 - Dark mode by default.
 - Remembers the most recently loaded MIDI files in the current browser.
 - Single settings panel for file loading, example-song loading, track selection, view mode, sound selection, playback speed, MIDI density, instrument height, export, and visual theme.
 - GitHub folder-scanned example song menu for hosted MIDI files.
 - Separate desktop URL that keeps the main app layout with the earlier roomier fretboard/piano proportion.
-- Primary and secondary MIDI track selectors, plus an optional bass track selector that defaults to off.
+- Primary and secondary MIDI track selectors, plus an optional bass track selector and a full-arrangement switch that plays and displays every playable track (enabled by default for catalog songs).
 - Smart Guitar mode is enabled by default for playable voicings, open strings, melody-aware chord placement, and octave-fit bass notes.
 - Smart Guitar Melody can protect a selected track slot as exact-pitch melody while accompaniment is octave-fit around it.
 - Chord Melody Mode biases guitar voicings so the selected melody sits on upper strings while accompaniment stays playable below and nearby.
 - Configurable guitar string channel maps for export and optional source-channel-based guitar display.
 - Sample-backed playback options for acoustic guitar, nylon guitar, electric guitar, electric bass, and piano, with synth fallback.
-- Local SF2, SF3, and DLS SoundFont playback that preserves MIDI channel programs, remembers the selected bank in the browser, and links to a song-name search on Musical Artifacts.
+- Validated local SF2, SF3, and DLS SoundFont playback plus one-tap online bank matching and browsing. Loaded banks preserve MIDI channel programs and drums, are initialized before the UI reports them ready, and are remembered in the browser when storage allows.
 - Guitar and piano view modes. Guitar mode defaults to scrolling tab notation, with sheet music still selectable. Piano mode switches the falling MIDI lanes to keyboard lanes, lights full keys while notes play, and uses compact stacked accidental labels.
 - VexFlow-rendered sheet notation with first-measure clef/time signature, rests, noteheads, stems, 32nd-note quantization, and accidentals.
 - Falling-note fretboard view with chord markers, adjustable density, fret-aligned lanes, string-colored guitar notes, overlap-aware split same-fret lanes, and a playhead at the fretboard edge.
@@ -82,12 +82,19 @@ Place `.mid` / `.midi` files in `public/example midi songs/` on the `main` branc
 The catalog index is generated from the upstream collections and is searched locally in the browser:
 
 - 1,046 classical-guitar MIDIs from [ClassTab](https://github.com/baweaver/classtab).
+- 1,700+ named rock, alternative, punk, metal, and guitar arrangements from the [Wild West MIDI archive](https://github.com/thewildwestmidis/midis); community transcription rights vary, so these are labeled for personal playback.
 - 69 public-domain MusicXML scores from [MuseTrainer](https://github.com/musetrainer/library).
 - 235 quantized classical piano scores and 1,067 expressive performances from the [ASAP dataset](https://github.com/fosfrancesco/asap-dataset) (CC BY-NC-SA 4.0).
 - 15 openly licensed cues from [e_midi](https://github.com/davehorner/e_midi/tree/develop/e_midi/midi) (MIT).
-- 3,142 files from the [Community Game MIDI Archive](https://github.com/ryanrudes/game-midis). This archive is downloaded once, indexed in-browser, and individual selections are extracted as needed; rights vary, so the UI labels it for personal playback.
+- 3,100 validated MIDI files from the [Community Game MIDI Archive](https://github.com/ryanrudes/game-midis). This archive is downloaded once, indexed in-browser, and individual selections are extracted as needed; rights vary, so the UI labels it for personal playback.
 
-Browse links also point to Songsterr, Ultimate Guitar's Guitar Pro catalog, Mutopia, VGMusic, and OpenGameArt. VGMusic remains external because its site explicitly prohibits direct links to individual music files.
+Browse links also point to a large Yngwie Malmsteen/shred MIDI search, Songsterr, Ultimate Guitar's Guitar Pro catalog, Mutopia, VGMusic, and OpenGameArt. Copyrighted artist material that cannot be responsibly mirrored remains an explicit external search instead of being copied into this repository. VGMusic also remains external because its site prohibits direct links to individual music files.
+
+Direct catalog files use both GitHub raw and jsDelivr URLs for retry/fallback. The game archive index excludes mislabeled or corrupt non-MIDI files, and the loader verifies that a selected song contains playable tracks before switching views.
+
+## Online SoundFonts
+
+The built-in SoundFont browser offers TimGM6mb for a fast mobile General MIDI bank, GeneralUser GS for fuller piano/rock/orchestral playback, and clearly labeled community NES, SNES, Nintendo 64, and Wii banks. Auto-match uses the loaded song, game, filename, and search text; when no console-specific match is clear, it chooses a General MIDI bank. The UI also links to a broader Musical Artifacts search.
 
 ## MIDI Notes
 
