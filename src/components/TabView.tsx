@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { GUITAR_STRINGS } from '../lib/fretboard'
 import type { MidiMarker, MidiNote, MidiPlacement, ParsedMidi } from '../lib/midi'
 import { activeMarkerAtTick, midiTicksToSeconds, secondsToTicks } from '../lib/midi'
@@ -67,7 +67,7 @@ function displayStringName(name: string) {
   return name.replace(/\d+$/, '')
 }
 
-function TabMeasureView({
+const TabMeasureView = memo(function TabMeasureView({
   measure,
   placements,
   trackColors = {},
@@ -168,7 +168,7 @@ function TabMeasureView({
       })}
     </div>
   )
-}
+})
 
 export function TabView({
   midi,

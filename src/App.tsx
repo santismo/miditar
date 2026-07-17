@@ -103,9 +103,9 @@ const MIN_INSTRUMENT_HEIGHT = 12
 const MAX_INSTRUMENT_HEIGHT = 30
 const CATALOG_PAGE_SIZE = 50
 const DOWNLOAD_TIMEOUT_MS = 90_000
-const PLAYBACK_SCHEDULE_AHEAD_SECONDS = 3
-const PLAYBACK_SCHEDULER_INTERVAL_MS = 400
-const PLAYHEAD_UPDATE_INTERVAL_MS = 1000 / 30
+const PLAYBACK_SCHEDULE_AHEAD_SECONDS = 0.75
+const PLAYBACK_SCHEDULER_INTERVAL_MS = 50
+const PLAYBACK_START_DELAY_SECONDS = 0.12
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -612,14 +612,9 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   useEffect(() => {
     if (!isPlaying) return
 
-    let lastUpdate = 0
-    const tick = (frameTime: number) => {
-      if (frameTime - lastUpdate < PLAYHEAD_UPDATE_INTERVAL_MS) {
-        rafRef.current = requestAnimationFrame(tick)
-        return
-      }
-      lastUpdate = frameTime
-      const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+    const tick = () => {
+      const transport = Tone.getTransport()
+      const elapsed = transport.getSecondsAtTime(Tone.immediate())
       const nextTime = Math.min(song.duration, playOffsetRef.current + elapsed * playbackRate)
       setCurrentTime(nextTime)
       if (nextTime >= song.duration) {
@@ -852,48 +847,57 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
       const schedulePlaybackWindow = () => {
         if (playbackRunRef.current !== runId) return
-        const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+        const elapsed = transport.getSecondsAtTime(Tone.immediate())
         const sourceHorizon =
           audioStartTime + (elapsed + PLAYBACK_SCHEDULE_AHEAD_SECONDS) * playbackRate
 
         while (nextNoteIndex < combinedNotes.length) {
-          const note = combinedNotes[nextNoteIndex]
-          if (note.time > sourceHorizon) break
-          nextNoteIndex += 1
-          if (note.time + note.duration < audioStartTime) continue
+          const firstNote = combinedNotes[nextNoteIndex]
+          if (firstNote.time > sourceHorizon) break
 
-          const start = Math.max(0, (note.time - audioStartTime) / playbackRate)
-          const duration = Math.max(0.03, note.duration / playbackRate)
-          transport.schedule((scheduledTime) => {
+          const tick = firstNote.tick
+          const notesAtTick: MidiNote[] = []
+          while (nextNoteIndex < combinedNotes.length && combinedNotes[nextNoteIndex].tick === tick) {
+            const note = combinedNotes[nextNoteIndex]
+            nextNoteIndex += 1
+            if (note.time + note.duration >= audioStartTime) notesAtTick.push(note)
+          }
+          if (!notesAtTick.length) continue
+
+          const start = Math.max(0, (firstNote.time - audioStartTime) / playbackRate)
+          transport.scheduleOnce((scheduledTime) => {
             if (playbackRunRef.current !== runId) return
-            if (engine.kind === 'sample') {
-              void engine.engine.triggerAttackRelease(
-                engine.instrumentId,
-                `play:${note.id}`,
-                mappedMidi(note),
-                scheduledTime,
+            for (const note of notesAtTick) {
+              const duration = Math.max(0.03, note.duration / playbackRate)
+              if (engine.kind === 'sample') {
+                void engine.engine.triggerAttackRelease(
+                  engine.instrumentId,
+                  `play:${note.id}`,
+                  mappedMidi(note),
+                  scheduledTime,
+                  duration,
+                  note.velocity * 0.78,
+                )
+                continue
+              }
+              if (engine.kind === 'soundfont') {
+                engine.engine.triggerAttackRelease(
+                  note.channel - 1,
+                  mappedMidi(note),
+                  duration,
+                  note.velocity * 0.78,
+                  programForNote(note),
+                  scheduledTime,
+                )
+                continue
+              }
+              engine.synth.triggerAttackRelease(
+                mappedNoteName(note),
                 duration,
+                scheduledTime,
                 note.velocity * 0.78,
               )
-              return
             }
-            if (engine.kind === 'soundfont') {
-              engine.engine.triggerAttackRelease(
-                note.channel - 1,
-                mappedMidi(note),
-                duration,
-                note.velocity * 0.78,
-                programForNote(note),
-                scheduledTime,
-              )
-              return
-            }
-            engine.synth.triggerAttackRelease(
-              mappedNoteName(note),
-              duration,
-              scheduledTime,
-              note.velocity * 0.78,
-            )
           }, start)
         }
 
@@ -906,7 +910,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         PLAYBACK_SCHEDULER_INTERVAL_MS,
       )
       schedulePlaybackWindow()
-      transport.start('+0.03')
+      transport.start(Tone.immediate() + PLAYBACK_START_DELAY_SECONDS)
     } catch (err) {
       if (playbackRunRef.current === runId) {
         stopPlayback()
@@ -919,10 +923,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     playbackRunRef.current += 1
     clearPlaybackScheduler()
     releaseAllScrubAudition()
+    synthRef.current?.releaseAll()
     sampleEngineRef.current?.releaseAll()
     soundFontEngineRef.current?.releaseAll()
     const transport = Tone.getTransport()
-    const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+    const elapsed = transport.getSecondsAtTime(Tone.immediate())
     const nextTime = clampTime(playOffsetRef.current + elapsed * playbackRate, song)
     transport.pause()
     setCurrentTime(nextTime)
@@ -933,6 +938,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     playbackRunRef.current += 1
     clearPlaybackScheduler()
     releaseAllScrubAudition()
+    synthRef.current?.releaseAll()
     sampleEngineRef.current?.releaseAll()
     soundFontEngineRef.current?.releaseAll()
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
