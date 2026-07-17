@@ -103,6 +103,9 @@ const MIN_INSTRUMENT_HEIGHT = 12
 const MAX_INSTRUMENT_HEIGHT = 30
 const CATALOG_PAGE_SIZE = 50
 const DOWNLOAD_TIMEOUT_MS = 90_000
+const PLAYBACK_SCHEDULE_AHEAD_SECONDS = 3
+const PLAYBACK_SCHEDULER_INTERVAL_MS = 400
+const PLAYHEAD_UPDATE_INTERVAL_MS = 1000 / 30
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -345,6 +348,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const playbackRunRef = useRef(0)
   const scrubRunRef = useRef(0)
   const rafRef = useRef<number | null>(null)
+  const playbackSchedulerRef = useRef<number | null>(null)
   const scrubAuditionRef = useRef<Map<string, ScrubVoice>>(new Map())
   const scrubReleaseTimerRef = useRef<number | null>(null)
   const shortcutActionsRef = useRef<ShortcutActions>({
@@ -571,9 +575,50 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   }, [])
 
   useEffect(() => {
+    const resumeAudio = () => {
+      if (document.visibilityState !== 'visible') return
+      const rawContext = Tone.getContext().rawContext
+      if (rawContext?.state === 'suspended') void rawContext.resume().catch(() => undefined)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stopPlayback()
+        soundFontEngineRef.current?.handleContextInterruption()
+        soundFontEngineRef.current = null
+        return
+      }
+      resumeAudio()
+    }
+
+    const handlePageHide = () => {
+      stopPlayback()
+      soundFontEngineRef.current?.handleContextInterruption()
+      soundFontEngineRef.current = null
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pageshow', resumeAudio)
+    window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener('pointerdown', resumeAudio, { passive: true })
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pageshow', resumeAudio)
+      window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener('pointerdown', resumeAudio)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!isPlaying) return
 
-    const tick = () => {
+    let lastUpdate = 0
+    const tick = (frameTime: number) => {
+      if (frameTime - lastUpdate < PLAYHEAD_UPDATE_INTERVAL_MS) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
+      lastUpdate = frameTime
       const elapsed = (performance.now() - playStartedAtRef.current) / 1000
       const nextTime = Math.min(song.duration, playOffsetRef.current + elapsed * playbackRate)
       setCurrentTime(nextTime)
@@ -800,37 +845,67 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       playStartedAtRef.current = performance.now()
       setCurrentTime(audioStartTime)
 
-      for (const note of combinedNotes) {
-        if (note.time + note.duration < audioStartTime) continue
-        const start = Math.max(0, (note.time - audioStartTime) / playbackRate)
-        const duration = Math.max(0.03, note.duration / playbackRate)
-        transport.schedule((scheduledTime) => {
-          if (engine.kind === 'sample') {
-            void engine.engine.triggerAttackRelease(
-              engine.instrumentId,
-              `play:${note.id}`,
-              mappedMidi(note),
-              scheduledTime,
+      let nextNoteIndex = combinedNotes.findIndex(
+        (note) => note.time + note.duration >= audioStartTime,
+      )
+      if (nextNoteIndex < 0) nextNoteIndex = combinedNotes.length
+
+      const schedulePlaybackWindow = () => {
+        if (playbackRunRef.current !== runId) return
+        const elapsed = (performance.now() - playStartedAtRef.current) / 1000
+        const sourceHorizon =
+          audioStartTime + (elapsed + PLAYBACK_SCHEDULE_AHEAD_SECONDS) * playbackRate
+
+        while (nextNoteIndex < combinedNotes.length) {
+          const note = combinedNotes[nextNoteIndex]
+          if (note.time > sourceHorizon) break
+          nextNoteIndex += 1
+          if (note.time + note.duration < audioStartTime) continue
+
+          const start = Math.max(0, (note.time - audioStartTime) / playbackRate)
+          const duration = Math.max(0.03, note.duration / playbackRate)
+          transport.schedule((scheduledTime) => {
+            if (playbackRunRef.current !== runId) return
+            if (engine.kind === 'sample') {
+              void engine.engine.triggerAttackRelease(
+                engine.instrumentId,
+                `play:${note.id}`,
+                mappedMidi(note),
+                scheduledTime,
+                duration,
+                note.velocity * 0.78,
+              )
+              return
+            }
+            if (engine.kind === 'soundfont') {
+              engine.engine.triggerAttackRelease(
+                note.channel - 1,
+                mappedMidi(note),
+                duration,
+                note.velocity * 0.78,
+                programForNote(note),
+                scheduledTime,
+              )
+              return
+            }
+            engine.synth.triggerAttackRelease(
+              mappedNoteName(note),
               duration,
+              scheduledTime,
               note.velocity * 0.78,
             )
-            return
-          }
-          if (engine.kind === 'soundfont') {
-            engine.engine.triggerAttackRelease(
-              note.channel - 1,
-              mappedMidi(note),
-              duration,
-              note.velocity * 0.78,
-              programForNote(note),
-              scheduledTime,
-            )
-            return
-          }
-          engine.synth.triggerAttackRelease(mappedNoteName(note), duration, scheduledTime, note.velocity * 0.78)
-        }, start)
+          }, start)
+        }
+
+        if (nextNoteIndex >= combinedNotes.length) clearPlaybackScheduler()
       }
 
+      clearPlaybackScheduler()
+      playbackSchedulerRef.current = window.setInterval(
+        schedulePlaybackWindow,
+        PLAYBACK_SCHEDULER_INTERVAL_MS,
+      )
+      schedulePlaybackWindow()
       transport.start('+0.03')
     } catch (err) {
       if (playbackRunRef.current === runId) {
@@ -842,6 +917,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
   function pausePlayback() {
     playbackRunRef.current += 1
+    clearPlaybackScheduler()
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
     soundFontEngineRef.current?.releaseAll()
@@ -855,6 +931,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
   function stopPlayback() {
     playbackRunRef.current += 1
+    clearPlaybackScheduler()
     releaseAllScrubAudition()
     sampleEngineRef.current?.releaseAll()
     soundFontEngineRef.current?.releaseAll()
@@ -865,6 +942,12 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     transport.seconds = 0
     playStartedAtRef.current = 0
     setIsPlaying(false)
+  }
+
+  function clearPlaybackScheduler() {
+    if (playbackSchedulerRef.current === null) return
+    window.clearInterval(playbackSchedulerRef.current)
+    playbackSchedulerRef.current = null
   }
 
   function scrubTo(time: number) {
