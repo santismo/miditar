@@ -70,6 +70,11 @@ import {
 import { SoundFontPlaybackEngine } from './lib/soundFontEngine'
 import { loadStoredSoundFont, removeStoredSoundFont, saveStoredSoundFont } from './lib/soundFontStore'
 import {
+  formatSoundFontSize,
+  rankSoundFonts,
+  type OnlineSoundFont,
+} from './lib/soundFontCatalog'
+import {
   MUSIC_LIBRARY_LABELS,
   MUSIC_LIBRARY_SOURCES,
   type MusicLibraryCategory,
@@ -97,6 +102,7 @@ const DESKTOP_DEFAULT_INSTRUMENT_HEIGHT = 22
 const MIN_INSTRUMENT_HEIGHT = 12
 const MAX_INSTRUMENT_HEIGHT = 30
 const CATALOG_PAGE_SIZE = 50
+const DOWNLOAD_TIMEOUT_MS = 90_000
 
 type TrackSelection = [number | null, number | null, number | null]
 type TrackSlot = 0 | 1 | 2
@@ -221,10 +227,64 @@ function shouldIgnoreKeyboardShortcut(event: KeyboardEvent) {
   return Boolean(target.closest('input, textarea, select, button, [role="textbox"], [contenteditable="true"]'))
 }
 
+async function downloadArrayBuffer(
+  urls: string[],
+  label: string,
+  onProgress?: (receivedBytes: number, totalBytes: number) => void,
+) {
+  const failures: string[] = []
+  for (const url of [...new Set(urls.filter(Boolean))]) {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      if (!response.ok) throw new Error(`returned ${response.status}`)
+      const totalBytes = Number(response.headers.get('content-length')) || 0
+      if (!response.body) {
+        const buffer = await response.arrayBuffer()
+        if (!buffer.byteLength) throw new Error('returned an empty file')
+        onProgress?.(buffer.byteLength, totalBytes || buffer.byteLength)
+        return buffer
+      }
+
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let receivedBytes = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value) continue
+        chunks.push(value)
+        receivedBytes += value.byteLength
+        onProgress?.(receivedBytes, totalBytes)
+      }
+      if (!receivedBytes) throw new Error('returned an empty file')
+      const bytes = new Uint8Array(receivedBytes)
+      let offset = 0
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+      return bytes.buffer
+    } catch (error) {
+      const message = error instanceof Error && error.name === 'AbortError'
+        ? 'timed out'
+        : error instanceof Error
+          ? error.message
+          : 'failed'
+      failures.push(message)
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+  throw new Error(`${label} could not be downloaded${failures.length ? ` (${failures.join('; ')})` : ''}.`)
+}
+
 function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [songs, setSongs] = useState<ParsedMidi[]>([DEMO_SONG])
   const [songIndex, setSongIndex] = useState(0)
   const [selectedTrackIndexes, setSelectedTrackIndexes] = useState<TrackSelection>(() => chooseDefaultTracks(DEMO_SONG))
+  const [useAllTracks, setUseAllTracks] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -252,6 +312,9 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [error, setError] = useState('')
   const [audioStatus, setAudioStatus] = useState('')
   const [soundFontName, setSoundFontName] = useState('')
+  const [soundFontBrowserOpen, setSoundFontBrowserOpen] = useState(false)
+  const [soundFontQuery, setSoundFontQuery] = useState('')
+  const [soundFontLoadingId, setSoundFontLoadingId] = useState('')
   const [librarySelection, setLibrarySelection] = useState<Record<MusicLibraryCategory, string>>({
     guitar: '',
     piano: '',
@@ -265,6 +328,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const [catalogSourceId, setCatalogSourceId] = useState('all')
   const [catalogPage, setCatalogPage] = useState(0)
   const [catalogActivity, setCatalogActivity] = useState('')
+  const [currentLibraryEntry, setCurrentLibraryEntry] = useState<MusicCatalogEntry | null>(null)
   const [landscapeMessage, setLandscapeMessage] = useState('')
   const [exampleSongs, setExampleSongs] = useState<ExampleSongEntry[]>([])
   const [exampleLoading, setExampleLoading] = useState(false)
@@ -275,7 +339,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const sampleEngineRef = useRef<SamplePlaybackEngine | null>(null)
   const soundFontEngineRef = useRef<SoundFontPlaybackEngine | null>(null)
   const soundFontBufferRef = useRef<ArrayBuffer | null>(null)
-  const archiveRef = useRef<{ url: string; zip: JSZip } | null>(null)
+  const archiveRef = useRef<{ key: string; zip: JSZip } | null>(null)
   const playOffsetRef = useRef(0)
   const playStartedAtRef = useRef(0)
   const playbackRunRef = useRef(0)
@@ -294,6 +358,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   const playbackInstruments = useMemo(() => instrumentsForViewMode(instrumentViewMode), [instrumentViewMode])
   const tracks = playableTracks(song)
   const selectedTracks = useMemo(() => {
+    if (useAllTracks) return tracks
     const seen = new Set<number>()
     const selected: MidiTrack[] = []
     for (const trackIndex of selectedTrackIndexes) {
@@ -304,7 +369,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       seen.add(track.index)
     }
     return selected
-  }, [selectedTrackIndexes, song])
+  }, [selectedTrackIndexes, song, tracks, useAllTracks])
   const combinedNotes = useMemo(
     () =>
       selectedTracks
@@ -324,12 +389,13 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     : null
   const trackColors = useMemo(() => {
     const colors: Record<number, string> = {}
-    selectedTrackIndexes.forEach((trackIndex, index) => {
+    const coloredIndexes = useAllTracks ? tracks.map((track) => track.index) : selectedTrackIndexes
+    coloredIndexes.forEach((trackIndex, index) => {
       if (trackIndex === null || colors[trackIndex]) return
       colors[trackIndex] = TRACK_COLORS[index % TRACK_COLORS.length]
     })
     return colors
-  }, [selectedTrackIndexes])
+  }, [selectedTrackIndexes, tracks, useAllTracks])
   const melodySourceSlot: TrackSlot = smartGuitarMode && smartGuitarMelody ? smartMelodyTrackSlot : 1
   const melodyTrackIndexes = useMemo(() => {
     const indexes = new Set<number>()
@@ -399,10 +465,22 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     catalogPage * CATALOG_PAGE_SIZE,
     (catalogPage + 1) * CATALOG_PAGE_SIZE,
   )
+  const soundFontMatchText = [
+    soundFontQuery,
+    song.title,
+    song.fileName,
+    currentLibraryEntry?.title,
+    currentLibraryEntry?.subtitle,
+    currentLibraryEntry?.path,
+    currentLibraryEntry?.category,
+    currentLibraryEntry?.sourceName,
+  ].filter(Boolean).join(' ')
+  const rankedSoundFonts = useMemo(() => rankSoundFonts(soundFontMatchText), [soundFontMatchText])
 
   useEffect(() => {
     if (!song) return
     setSelectedTrackIndexes(chooseDefaultTracks(song))
+    setUseAllTracks((current) => current && playableTracks(song).length > 1)
     setCurrentTime(0)
     setTempoBpm(songTempoBpm(song))
     setUseOriginalTabPositions(Boolean(song.exactPlacements?.length))
@@ -564,7 +642,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       try {
         const engine = getSoundFontEngine()
         setAudioStatus(`Loading ${soundFontName}...`)
-        await engine.load(buffer, soundFontName)
+        await engine.load(buffer, `${soundFontName}:${buffer.byteLength}`)
         setAudioStatus(`${soundFontName} ready`)
         return { kind: 'soundfont', engine }
       } catch (err) {
@@ -872,6 +950,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       setSongs(parsed)
       setSongIndex(0)
       setRecentMidiFiles(loadedFiles)
+      setCurrentLibraryEntry(null)
+      setUseAllTracks(false)
       setSelectedTrackIndexes(chooseDefaultTracks(parsed[0]))
       setCurrentTime(0)
       setTempoBpm(songTempoBpm(parsed[0]))
@@ -884,21 +964,34 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
   async function readCatalogEntry(entry: MusicCatalogEntry) {
     if (entry.delivery === 'direct') {
-      if (!entry.url) throw new Error(`${entry.sourceName} did not provide a download URL.`)
-      const response = await fetch(entry.url)
-      if (!response.ok) throw new Error(`The ${entry.sourceName} source returned ${response.status}.`)
-      return response.arrayBuffer()
+      const urls = entry.urls?.length ? entry.urls : entry.url ? [entry.url] : []
+      if (!urls.length) throw new Error(`${entry.sourceName} did not provide a download URL.`)
+      return downloadArrayBuffer(urls, entry.title, (receivedBytes, totalBytes) => {
+        const received = (receivedBytes / 1024 / 1024).toFixed(1)
+        const total = totalBytes ? ` / ${(totalBytes / 1024 / 1024).toFixed(1)} MB` : ' MB'
+        setCatalogActivity(`Downloading ${entry.title}: ${received}${total}`)
+      })
     }
 
-    if (!entry.archiveUrl) throw new Error(`${entry.sourceName} did not provide an archive URL.`)
+    const archiveUrls = entry.archiveUrls?.length
+      ? entry.archiveUrls
+      : entry.archiveUrl
+        ? [entry.archiveUrl]
+        : []
+    if (!archiveUrls.length) throw new Error(`${entry.sourceName} did not provide an archive URL.`)
+    const archiveKey = archiveUrls.join('|')
     let loadedArchive = archiveRef.current
-    if (!loadedArchive || loadedArchive.url !== entry.archiveUrl) {
+    if (!loadedArchive || loadedArchive.key !== archiveKey) {
       setCatalogActivity('Downloading and indexing the game archive (about 12 MB)...')
-      const response = await fetch(entry.archiveUrl)
-      if (!response.ok) throw new Error(`The ${entry.sourceName} archive returned ${response.status}.`)
+      const archiveBuffer = await downloadArrayBuffer(archiveUrls, `${entry.sourceName} archive`, (receivedBytes, totalBytes) => {
+        const received = (receivedBytes / 1024 / 1024).toFixed(1)
+        const total = totalBytes ? ` / ${(totalBytes / 1024 / 1024).toFixed(1)} MB` : ' MB'
+        setCatalogActivity(`Downloading game archive: ${received}${total}`)
+      })
       const { default: Zip } = await import('jszip')
-      const zip = await Zip.loadAsync(await response.arrayBuffer())
-      loadedArchive = { url: entry.archiveUrl, zip }
+      setCatalogActivity('Indexing the downloaded game archive...')
+      const zip = await Zip.loadAsync(archiveBuffer)
+      loadedArchive = { key: archiveKey, zip }
       archiveRef.current = loadedArchive
     }
 
@@ -918,6 +1011,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     try {
       const buffer = await readCatalogEntry(entry)
       const loadedSong = withAnalyzedChordMarkers(await parseSupportedMusicFile(buffer.slice(0), entry.fileName))
+      const loadedTracks = playableTracks(loadedSong)
+      if (!loadedTracks.length) throw new Error(`${entry.title} contains no playable note tracks.`)
       const loadedFile: RecentMidiFile = {
         name: entry.fileName,
         lastModified: Date.now(),
@@ -929,12 +1024,14 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       setSongs([loadedSong])
       setSongIndex(0)
       setRecentMidiFiles([loadedFile])
+      setCurrentLibraryEntry(entry)
+      setUseAllTracks(loadedTracks.length > 1)
       setSelectedTrackIndexes(chooseDefaultTracks(loadedSong))
       setCurrentTime(0)
       setTempoBpm(songTempoBpm(loadedSong))
       setSettingsOpen(false)
       setCatalogOpenCategory(null)
-      setCatalogActivity(`Loaded ${entry.title} from ${entry.sourceName}.`)
+      setCatalogActivity(`Loaded all ${loadedTracks.length} playable track${loadedTracks.length === 1 ? '' : 's'} from ${entry.sourceName}.`)
       void saveRecentMidiState({ files: [loadedFile], songIndex: 0 })
     } catch (err) {
       setError(err instanceof Error ? err.message : `Could not load ${entry.title}.`)
@@ -986,6 +1083,45 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     }
   }
 
+  async function activateSoundFont(
+    name: string,
+    buffer: ArrayBuffer,
+    metadata: { size: number; lastModified: number },
+  ) {
+    if (!buffer.byteLength) throw new Error(`${name} is empty.`)
+    stopPlayback()
+    releaseAllScrubAudition()
+    setError('')
+    setAudioStatus(`Preparing ${name}...`)
+    await Tone.start()
+    soundFontEngineRef.current?.dispose()
+    soundFontEngineRef.current = null
+    let engine: SoundFontPlaybackEngine | null = null
+    try {
+      engine = getSoundFontEngine()
+      await engine.load(buffer, `${name}:${buffer.byteLength}`)
+      soundFontBufferRef.current = buffer
+      setSoundFontName(name)
+      setPlaybackInstrumentId('soundfont:custom')
+      setAudioStatus(`${name} ready for playback`)
+    } catch (error) {
+      engine?.dispose()
+      soundFontEngineRef.current = null
+      throw error
+    }
+
+    try {
+      await saveStoredSoundFont({
+        name,
+        size: metadata.size,
+        lastModified: metadata.lastModified,
+        buffer: buffer.slice(0),
+      })
+    } catch {
+      setAudioStatus(`${name} ready (browser storage was full, so it was not saved)`)
+    }
+  }
+
   async function loadSoundFontFile(file: File) {
     if (!/\.(sf2|sf3|dls)$/i.test(file.name)) {
       setError('Choose an SF2, SF3, or DLS SoundFont file.')
@@ -993,27 +1129,45 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     }
 
     try {
-      stopPlayback()
-      releaseAllScrubAudition()
-      setError('')
       setAudioStatus(`Reading ${file.name}...`)
       const buffer = await file.arrayBuffer()
-      soundFontEngineRef.current?.dispose()
-      soundFontEngineRef.current = null
-      soundFontBufferRef.current = buffer
-      setSoundFontName(file.name)
-      setPlaybackInstrumentId('soundfont:custom')
-      setAudioStatus(`${file.name} loaded`)
-      await saveStoredSoundFont({
-        name: file.name,
+      await activateSoundFont(file.name, buffer, {
         size: file.size,
         lastModified: file.lastModified,
-        buffer: buffer.slice(0),
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load that SoundFont.')
-      setAudioStatus('')
+      setAudioStatus('SoundFont could not be loaded; choose a different bank')
     }
+  }
+
+  async function loadOnlineSoundFont(soundFont: OnlineSoundFont) {
+    if (soundFontLoadingId) return
+    setSoundFontLoadingId(soundFont.id)
+    setError('')
+    try {
+      await Tone.start()
+      const buffer = await downloadArrayBuffer([soundFont.url, soundFont.fallbackUrl ?? ''], soundFont.name, (receivedBytes, totalBytes) => {
+        const effectiveTotal = totalBytes || soundFont.sizeBytes
+        const percent = effectiveTotal ? Math.min(100, Math.round(receivedBytes / effectiveTotal * 100)) : 0
+        setAudioStatus(`Downloading ${soundFont.name}: ${percent}% (${formatSoundFontSize(receivedBytes)})`)
+      })
+      await activateSoundFont(soundFont.name, buffer, {
+        size: buffer.byteLength,
+        lastModified: Date.now(),
+      })
+      setSoundFontBrowserOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not load ${soundFont.name}.`)
+      setAudioStatus('SoundFont could not be loaded; Synth remains available')
+    } finally {
+      setSoundFontLoadingId('')
+    }
+  }
+
+  function loadMatchingSoundFont() {
+    const match = rankedSoundFonts[0]
+    if (match) void loadOnlineSoundFont(match)
   }
 
   function clearSoundFont() {
@@ -1028,19 +1182,11 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
     void removeStoredSoundFont().catch(() => undefined)
   }
 
-  function findMatchingSoundFont() {
-    const query = song.title || 'General MIDI'
-    window.open(
-      `https://musical-artifacts.com/artifacts?q=${encodeURIComponent(query)}&formats=sf2`,
-      '_blank',
-      'noopener,noreferrer',
-    )
-  }
-
   function updateTrackSlot(slot: TrackSlot, value: string) {
     stopPlayback()
     releaseAllScrubAudition()
     setCurrentTime(0)
+    setUseAllTracks(false)
     setSelectedTrackIndexes((current) => {
       const next: TrackSelection = [...current]
       next[slot] = value === 'none' ? null : Number(value)
@@ -1181,9 +1327,31 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
   }
 
   function reanalyzeSelectedTracks() {
-    const trackIndexes = new Set(selectedTrackIndexes.filter((index): index is number => index !== null))
+    const trackIndexes = new Set(selectedTracks.map((track) => track.index))
     const nextSong = regenerateChordMarkers(song, { trackIndexes: trackIndexes.size ? trackIndexes : undefined })
     setSongs((current) => current.map((item, index) => (index === songIndex ? nextSong : item)))
+  }
+
+  function renderAllTracksControl() {
+    if (tracks.length < 2) return null
+    return (
+      <label className="toggle-field all-tracks-toggle">
+        <span>
+          Play / display all MIDI tracks
+          <small>{tracks.length} playable tracks in this file</small>
+        </span>
+        <input
+          type="checkbox"
+          checked={useAllTracks}
+          onChange={(event) => {
+            stopPlayback()
+            releaseAllScrubAudition()
+            setCurrentTime(0)
+            setUseAllTracks(event.target.checked)
+          }}
+        />
+      </label>
+    )
   }
 
   function renderChordAnalysisControls() {
@@ -1396,12 +1564,72 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         <div className="soundfont-actions">
           <button type="button" className="button secondary" onClick={() => soundFontInputRef.current?.click()}>
             <FolderOpen size={16} />
-            Load SoundFont
+            Load Local
           </button>
-          <button type="button" className="button secondary" onClick={findMatchingSoundFont}>
-            Find for This Song
-          </button>
+          {!OFFLINE_BUILD && (
+            <button
+              type="button"
+              className="button secondary"
+              disabled={Boolean(soundFontLoadingId)}
+              onClick={loadMatchingSoundFont}
+            >
+              {soundFontLoadingId ? 'Loading...' : `Auto-match ${rankedSoundFonts[0]?.name ?? 'Bank'}`}
+            </button>
+          )}
+          {!OFFLINE_BUILD && (
+            <button
+              type="button"
+              className="button secondary soundfont-browse-button"
+              onClick={() => setSoundFontBrowserOpen((open) => !open)}
+            >
+              <Search size={16} />
+              {soundFontBrowserOpen ? 'Hide Online Banks' : 'Browse Online Banks'}
+            </button>
+          )}
         </div>
+        {soundFontBrowserOpen && !OFFLINE_BUILD && (
+          <div className="soundfont-browser">
+            <label className="soundfont-search">
+              <Search size={15} />
+              <input
+                type="search"
+                value={soundFontQuery}
+                placeholder="Match a game, console, piano, rock..."
+                onChange={(event) => setSoundFontQuery(event.target.value)}
+              />
+            </label>
+            <div className="soundfont-results">
+              {rankedSoundFonts.map((soundFont, index) => (
+                <article className="soundfont-result" key={soundFont.id}>
+                  <div>
+                    <strong>{soundFont.name}{index === 0 ? ' · best match' : ''}</strong>
+                    <span>{soundFont.description}</span>
+                    <small>{formatSoundFontSize(soundFont.sizeBytes)} · {soundFont.license}</small>
+                  </div>
+                  <div className="soundfont-result-actions">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={Boolean(soundFontLoadingId)}
+                      onClick={() => void loadOnlineSoundFont(soundFont)}
+                    >
+                      {soundFontLoadingId === soundFont.id ? 'Loading...' : 'Load & use'}
+                    </button>
+                    <a href={soundFont.sourceUrl} target="_blank" rel="noreferrer">Source</a>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <a
+              className="soundfont-database-link"
+              href={`https://musical-artifacts.com/artifacts?q=${encodeURIComponent(soundFontQuery || song.title || 'General MIDI')}&formats=sf2`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Search more banks on Musical Artifacts
+            </a>
+          </div>
+        )}
         {soundFontName && (
           <div className="soundfont-loaded">
             <span title={soundFontName}>{soundFontName}</span>
@@ -1572,6 +1800,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
         setSongs([DEMO_SONG])
         setSongIndex(0)
         setRecentMidiFiles(null)
+        setCurrentLibraryEntry(null)
+        setUseAllTracks(false)
         setSelectedTrackIndexes(chooseDefaultTracks(DEMO_SONG))
         setCurrentTime(0)
         setTempoBpm(songTempoBpm(DEMO_SONG))
@@ -1591,6 +1821,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
       setSongs([analyzedSong])
       setSongIndex(0)
       setRecentMidiFiles([loadedFile])
+      setCurrentLibraryEntry(null)
+      setUseAllTracks(false)
       setSelectedTrackIndexes(chooseDefaultTracks(analyzedSong))
       setCurrentTime(0)
       setTempoBpm(songTempoBpm(analyzedSong))
@@ -1726,6 +1958,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
 
             <section className="desktop-control-section">
               <h2>Tracks</h2>
+              {renderAllTracksControl()}
               <div className="track-grid">
                 {([0, 1, 2] as TrackSlot[]).map((slot) => {
                   const selectedIndex = selectedTrackIndexes[slot]
@@ -1737,6 +1970,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                       </span>
                       <select
                         value={selectedIndex ?? 'none'}
+                        disabled={useAllTracks}
                         onChange={(event) => updateTrackSlot(slot, event.target.value)}
                       >
                         <option value="none">None</option>
@@ -2137,6 +2371,8 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
               </label>
             )}
 
+            {renderAllTracksControl()}
+
             <div className="track-grid">
               {([0, 1, 2] as TrackSlot[]).map((slot) => {
                 const selectedIndex = selectedTrackIndexes[slot]
@@ -2148,6 +2384,7 @@ function App({ variant = 'mobile', desktopSizing = false }: AppProps = {}) {
                     </span>
                     <select
                       value={selectedIndex ?? 'none'}
+                      disabled={useAllTracks}
                       onChange={(event) => updateTrackSlot(slot, event.target.value)}
                     >
                       <option value="none">None</option>

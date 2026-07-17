@@ -22,7 +22,7 @@ const MUSETRAINER_RAW = 'https://raw.githubusercontent.com/musetrainer/library/m
 const GAME_MIDI_RAW = 'https://raw.githubusercontent.com/davehorner/e_midi/develop/e_midi/midi'
 
 export const MUSIC_LIBRARY_LABELS: Record<MusicLibraryCategory, string> = {
-  guitar: 'Guitar & Classical Tab',
+  guitar: 'Guitar, Rock, Shred & Classical',
   piano: 'Piano & Ragtime',
   'video-game': 'Video Game',
 }
@@ -30,6 +30,8 @@ export const MUSIC_LIBRARY_LABELS: Record<MusicLibraryCategory, string> = {
 export const MUSIC_LIBRARY_SOURCES: Record<MusicLibraryCategory, MusicLibrarySource[]> = {
   guitar: [
     { label: 'Browse ClassTab', url: 'https://github.com/baweaver/classtab' },
+    { label: 'Browse rock & shred MIDIs', url: 'https://github.com/thewildwestmidis/midis' },
+    { label: 'Search Yngwie / shred MIDIs', url: 'https://midifind.com/files/m/malmsteen_yngwie/1290' },
     { label: 'Browse Songsterr', url: 'https://www.songsterr.com/' },
     { label: 'Browse Guitar Pro tabs', url: 'https://www.ultimate-guitar.com/explore?type%5B%5D=Pro' },
   ],

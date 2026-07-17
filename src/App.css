@@ -213,6 +213,17 @@
   gap: 10px;
 }
 
+.all-tracks-toggle > span {
+  display: grid;
+  gap: 2px;
+}
+
+.all-tracks-toggle small {
+  color: #869281;
+  font-size: 10px;
+  font-weight: 620;
+}
+
 .channel-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -394,6 +405,7 @@
 }
 
 .catalog-header {
+  grid-row: 1;
   border-bottom: 1px solid #2f392e;
 }
 
@@ -417,6 +429,7 @@
 }
 
 .catalog-toolbar {
+  grid-row: 2;
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(190px, 0.55fr) auto;
   gap: 9px;
@@ -463,6 +476,7 @@
 }
 
 .catalog-activity {
+  grid-row: 3;
   padding: 8px 14px;
   border-bottom: 1px solid #273026;
   color: #a7d9ff;
@@ -471,10 +485,14 @@
 }
 
 .catalog-results {
+  grid-row: 4;
   min-height: 0;
   display: grid;
   align-content: start;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 8px;
   scrollbar-width: thin;
 }
@@ -548,6 +566,7 @@
 }
 
 .catalog-footer {
+  grid-row: 5;
   border-top: 1px solid #2f392e;
 }
 
@@ -597,6 +616,106 @@
   min-height: 36px;
   padding-inline: 8px;
   font-size: 11px;
+}
+
+.soundfont-browse-button {
+  grid-column: 1 / -1;
+}
+
+.soundfont-browser {
+  min-height: 0;
+  display: grid;
+  gap: 7px;
+  padding-top: 3px;
+}
+
+.soundfont-search {
+  min-width: 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid #364335;
+  border-radius: 6px;
+  color: #91a18b;
+  background: #070907;
+}
+
+.soundfont-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: #f2efe4;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+}
+
+.soundfont-results {
+  max-height: min(310px, 42svh);
+  display: grid;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.soundfont-result {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px 2px;
+  border-bottom: 1px solid #263025;
+}
+
+.soundfont-result > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.soundfont-result strong {
+  color: #f6d774;
+  font-size: 11px;
+}
+
+.soundfont-result span,
+.soundfont-result small {
+  color: #a8b2a2;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.soundfont-result small {
+  color: #778373;
+}
+
+.soundfont-result-actions {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  text-align: center;
+}
+
+.soundfont-result-actions .button {
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 10px;
+}
+
+.soundfont-result-actions a,
+.soundfont-database-link {
+  color: #86c9ff;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.soundfont-database-link {
+  padding: 2px;
 }
 
 .soundfont-loaded {
